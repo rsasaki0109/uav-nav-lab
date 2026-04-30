@@ -468,3 +468,32 @@ def test_mpc_uses_configured_predictor(tmp_path: Path) -> None:
     cfg.planner["predictor"] = {"type": "constant_velocity"}
     p = planner_cls.from_config(cfg.planner)
     assert isinstance(p._predictor, cv.ConstantVelocityPredictor)
+
+
+def test_multi_drone_runs_and_logs(tmp_path: Path) -> None:
+    """Two drones, head-on; per-drone episode logs land alongside each other."""
+    cfg = ExperimentConfig.from_yaml(EXAMPLES / "exp_multi_drone.yaml")
+    cfg.num_episodes = 2
+    cfg.simulator["max_steps"] = 600
+    run_dir = run_experiment(cfg, tmp_path / "multi")
+    drone_logs = sorted(run_dir.glob("episode_*_drone_*.json"))
+    # 2 episodes × 2 drones
+    assert len(drone_logs) == 4
+    # parent eval treats each drone-episode as its own row
+    summary = evaluate_run(run_dir)
+    assert summary["n_episodes"] == 4
+
+    # at least one drone log should have a sane outcome string
+    import json as _json
+    log = _json.loads(drone_logs[0].read_text())
+    assert log["outcome"] in {"success", "collision", "timeout"}
+    assert "drone_id" in log["meta"]
+
+
+def test_multi_drone_scenario_validates_drones() -> None:
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+
+    cls = SCENARIO_REGISTRY.get("multi_drone_grid")
+    with pytest.raises(ValueError):
+        # missing `drones` block must be rejected
+        cls.from_config({"size": [10, 10], "obstacles": {"type": "none"}})

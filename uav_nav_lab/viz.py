@@ -144,7 +144,12 @@ def viz_run(run_dir: Path, *, show: bool = False) -> list[Path]:
         else:
             fig, ax = plt.subplots(figsize=(6, 6))
             _render_episode_2d(plt, ax, cfg, ep, scenario)
-        out = run_dir / f"episode_{ep['meta']['episode']:03d}.png"
+        ep_idx = ep["meta"]["episode"]
+        drone_id = ep["meta"].get("drone_id")
+        if drone_id is None:
+            out = run_dir / f"episode_{ep_idx:03d}.png"
+        else:
+            out = run_dir / f"episode_{ep_idx:03d}_drone_{drone_id:02d}.png"
         fig.tight_layout()
         fig.savefig(out, dpi=120)
         if show:  # pragma: no cover

@@ -139,6 +139,12 @@ def _run_episode(
 
 def run_experiment(cfg: ExperimentConfig, output_dir: Path) -> Path:
     """Run all episodes for a single config; return the output directory."""
+    # Dispatch multi-drone scenarios to the multi-drone runner. The single-
+    # drone code path below stays untouched for the much more common case.
+    if str(cfg.scenario.get("type", "")) == "multi_drone_grid":
+        from .multi import run_experiment_multi
+        return run_experiment_multi(cfg, output_dir)
+
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     with (output_dir / "config.yaml").open("w", encoding="utf-8") as f:

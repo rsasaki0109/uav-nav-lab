@@ -1,0 +1,61 @@
+# Two drones flying toward each other through a sparse static field.
+# Each plans independently with MPC and observes the other as a moving
+# obstacle through the configured sensor.
+#
+# Ablation ideas:
+#   --param planner.use_prediction=true,false
+#       isolates the effect of constant-velocity peer prediction
+#   --param planner.predictor.velocity_noise_std=0.0,1.0,2.0
+#       (after switching predictor.type=noisy_velocity) — peer-tracking
+#       quality vs. mid-air collision rate.
+name: multi_drone_headon
+seed: 42
+num_episodes: 5
+
+scenario:
+  type: multi_drone_grid
+  size: [60, 30]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 20
+    seed: 7
+  drones:
+    - name: alice
+      start: [3.0, 15.0]
+      goal: [55.0, 15.0]
+      radius: 0.4
+    - name: bob
+      start: [55.0, 15.0]
+      goal: [3.0, 15.0]
+      radius: 0.4
+
+simulator:
+  type: dummy_2d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: mpc
+  max_speed: 7.0
+  replan_period: 0.2
+  horizon: 60
+  dt_plan: 0.05
+  n_samples: 32
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  safety_margin: 0.6
+  use_prediction: true
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/multi_drone_headon

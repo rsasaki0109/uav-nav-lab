@@ -35,13 +35,24 @@ class DummySim(SimInterface):
     instantaneous accel to `max_accel` so step responses stay realistic.
     """
 
-    def __init__(self, params: _DummyParams, scenario: Any) -> None:
+    def __init__(
+        self,
+        params: _DummyParams,
+        scenario: Any,
+        *,
+        advance_scenario: bool = True,
+    ) -> None:
         self.p = params
         self.dt = params.dt
         self.scenario = scenario
+        self._advance_scenario = bool(advance_scenario)
         self._ndim = scenario.ndim
         self._state: SimState | None = None
         self._step_count = 0
+        # Per-drone goal override (set by the multi-drone runner). When unset
+        # we delegate to the scenario's single goal — preserving single-drone
+        # behavior unchanged.
+        self._goal_override: np.ndarray | None = None
         wind = np.asarray(params.wind, dtype=float) if params.wind else np.zeros(self._ndim)
         if wind.shape[0] < self._ndim:
             wind = np.concatenate([wind, np.zeros(self._ndim - wind.shape[0])])
@@ -62,11 +73,19 @@ class DummySim(SimInterface):
         )
         return cls(params, scenario)
 
-    def reset(self, *, seed: int | None = None) -> SimState:
+    def reset(
+        self,
+        *,
+        seed: int | None = None,
+        initial_position: np.ndarray | None = None,
+    ) -> SimState:
         if seed is not None:
             self.scenario.reseed(seed)
             self._rng = np.random.default_rng(seed)
-        start = np.asarray(self.scenario.start, dtype=float)
+        if initial_position is not None:
+            start = np.asarray(initial_position, dtype=float).reshape(self._ndim)
+        else:
+            start = np.asarray(self.scenario.start, dtype=float)
         self._state = SimState(t=0.0, position=start.copy(), velocity=np.zeros(self._ndim))
         self._step_count = 0
         return self._state.copy()
@@ -93,11 +112,15 @@ class DummySim(SimInterface):
         ) * self.dt
         self._state.t += self.dt
         self._step_count += 1
-        self.scenario.advance(self.dt)  # no-op for static-only scenarios
+        if self._advance_scenario:
+            self.scenario.advance(self.dt)  # no-op for static-only scenarios
 
         collision = self.scenario.is_collision(self._state.position, self.p.drone_radius)
+        goal_pos = (
+            self._goal_override if self._goal_override is not None else self.scenario.goal
+        )
         goal_reached = bool(
-            np.linalg.norm(self._state.position - self.scenario.goal) <= self.p.goal_radius
+            np.linalg.norm(self._state.position - goal_pos) <= self.p.goal_radius
         )
         truncated = self._step_count >= self.p.max_steps
         return self._state.copy(), SimStepInfo(
@@ -111,7 +134,13 @@ class DummySim(SimInterface):
 
     @property
     def goal(self) -> np.ndarray:
+        if self._goal_override is not None:
+            return np.asarray(self._goal_override, dtype=float)
         return np.asarray(self.scenario.goal, dtype=float)
+
+    def set_goal(self, goal: np.ndarray) -> None:
+        """Override the goal used by the goal-reached check (multi-drone)."""
+        self._goal_override = np.asarray(goal, dtype=float).reshape(self._ndim)
 
     @property
     def obstacle_map(self) -> np.ndarray:
