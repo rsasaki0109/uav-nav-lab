@@ -95,7 +95,14 @@ class AStarPlanner(Planner):
     def _world_to_cell(self, p: np.ndarray, shape: tuple[int, ...]) -> tuple[int, ...]:
         return tuple(int(np.clip(p[i] / self.resolution, 0, shape[i] - 1)) for i in range(len(shape)))
 
-    def plan(self, observation: np.ndarray, goal: np.ndarray, obstacle_map: Any) -> Plan:
+    def plan(
+        self,
+        observation: np.ndarray,
+        goal: np.ndarray,
+        obstacle_map: Any,
+        *,
+        dynamic_obstacles: list[dict] | None = None,
+    ) -> Plan:
         occ_raw = np.asarray(obstacle_map, dtype=bool)
         ndim = occ_raw.ndim
         occ = inflate_obstacles(occ_raw, self.inflate)

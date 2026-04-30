@@ -20,3 +20,8 @@ class PerfectSensor(SensorModel):
 
     def observe(self, t: float, true_position: np.ndarray) -> np.ndarray:
         return np.asarray(true_position, dtype=float).copy()
+
+    def observe_dynamics(
+        self, t: float, true_position: np.ndarray, dynamic_obstacles: list[dict]
+    ) -> list[dict]:
+        return [dict(d) for d in dynamic_obstacles]

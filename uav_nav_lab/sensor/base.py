@@ -38,5 +38,17 @@ class SensorModel(ABC):
         """
         return true_obstacle_map
 
+    def observe_dynamics(
+        self, t: float, true_position: np.ndarray, dynamic_obstacles: list[dict]
+    ) -> list[dict]:
+        """Return the perceived dynamic obstacles (with positions/velocities).
+
+        Default: empty list — by default the planner has no privileged
+        information about moving threats. Subclasses override to either
+        report the full ground-truth (perfect / delayed) or filter by
+        sensor range (lidar / depth).
+        """
+        return []
+
 
 SENSOR_REGISTRY: Registry[SensorModel] = Registry("sensor")

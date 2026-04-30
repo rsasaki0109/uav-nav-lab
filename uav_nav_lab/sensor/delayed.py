@@ -50,3 +50,10 @@ class DelayedSensor(SensorModel):
         if self.noise_std > 0.0:
             obs = obs + self._rng.normal(0.0, self.noise_std, size=obs.shape)
         return obs
+
+    def observe_dynamics(
+        self, t: float, true_position: np.ndarray, dynamic_obstacles: list[dict]
+    ) -> list[dict]:
+        # Ground-truth dynamics with no per-object delay yet — same convention
+        # as the perfect sensor. Position-level delay is what this class models.
+        return [dict(d) for d in dynamic_obstacles]

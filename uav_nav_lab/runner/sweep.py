@@ -27,6 +27,12 @@ from .experiment import run_experiment
 
 def _parse_value(s: str) -> Any:
     s = s.strip()
+    # bool literals (so `--param planner.use_prediction=true,false` works)
+    low = s.lower()
+    if low == "true":
+        return True
+    if low == "false":
+        return False
     # try int, then float, else keep as string
     try:
         i = int(s)

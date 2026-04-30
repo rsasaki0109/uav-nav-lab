@@ -40,5 +40,15 @@ class Scenario(ABC):
         Default: no-op. Scenarios with moving obstacles override this.
         """
 
+    @property
+    def dynamic_obstacles(self) -> list[dict]:
+        """Return current dynamic obstacle states.
+
+        Format: [{position: [..], velocity: [..], radius: r}, ...].
+        Default: []. Scenarios with moving obstacles override this so
+        sensors and predictive planners can consume them.
+        """
+        return []
+
 
 SCENARIO_REGISTRY: Registry[Scenario] = Registry("scenario")

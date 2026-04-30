@@ -49,7 +49,15 @@ class Planner(ABC):
         observation: np.ndarray,
         goal: np.ndarray,
         obstacle_map: Any,
-    ) -> Plan: ...
+        *,
+        dynamic_obstacles: list[dict] | None = None,
+    ) -> Plan:
+        """Compute a Plan from current observation.
+
+        `dynamic_obstacles` (optional): list of {position, velocity, radius}
+        dicts the sensor reported as observed. Predictive planners use the
+        velocities to extrapolate; non-predictive planners ignore it.
+        """
 
     def reset(self) -> None:
         """Called once at the start of each episode. Default: no-op."""

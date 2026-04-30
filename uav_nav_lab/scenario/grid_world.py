@@ -218,3 +218,14 @@ class GridWorldScenario(Scenario):
     @property
     def goal(self) -> np.ndarray:
         return self._goal.copy()
+
+    @property
+    def dynamic_obstacles(self) -> list[dict]:
+        return [
+            {
+                "position": [float(v) for v in d.pos],
+                "velocity": [float(v) for v in d.vel],
+                "radius": float(d.radius),
+            }
+            for d in self._dynamic
+        ]

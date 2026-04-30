@@ -26,7 +26,14 @@ class StraightLinePlanner(Planner):
             samples=int(cfg.get("samples", 8)),
         )
 
-    def plan(self, observation: np.ndarray, goal: np.ndarray, obstacle_map: Any) -> Plan:
+    def plan(
+        self,
+        observation: np.ndarray,
+        goal: np.ndarray,
+        obstacle_map: Any,
+        *,
+        dynamic_obstacles: list[dict] | None = None,
+    ) -> Plan:
         ndim = int(np.asarray(obstacle_map).ndim) if obstacle_map is not None else 2
         start = np.asarray(observation, dtype=float)[:ndim]
         end = np.asarray(goal, dtype=float)[:ndim]

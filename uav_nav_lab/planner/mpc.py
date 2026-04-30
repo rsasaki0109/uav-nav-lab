@@ -38,6 +38,8 @@ class SamplingMPCPlanner(Planner):
         resolution: float = 1.0,
         inflate: int = 1,
         goal_radius: float = 1.5,
+        safety_margin: float = 0.4,
+        use_prediction: bool = True,
         w_goal: float = 1.0,
         w_obs: float = 100.0,
         w_smooth: float = 0.05,
@@ -49,6 +51,8 @@ class SamplingMPCPlanner(Planner):
         self.resolution = float(resolution)
         self.inflate = int(inflate)
         self.goal_radius = float(goal_radius)
+        self.safety_margin = float(safety_margin)
+        self.use_prediction = bool(use_prediction)
         self.w_goal = float(w_goal)
         self.w_obs = float(w_obs)
         self.w_smooth = float(w_smooth)
@@ -64,6 +68,8 @@ class SamplingMPCPlanner(Planner):
             resolution=float(cfg.get("resolution", 1.0)),
             inflate=int(cfg.get("inflate", 1)),
             goal_radius=float(cfg.get("goal_radius", 1.5)),
+            safety_margin=float(cfg.get("safety_margin", 0.4)),
+            use_prediction=bool(cfg.get("use_prediction", True)),
             w_goal=float(cfg.get("w_goal", 1.0)),
             w_obs=float(cfg.get("w_obs", 100.0)),
             w_smooth=float(cfg.get("w_smooth", 0.05)),
@@ -87,9 +93,25 @@ class SamplingMPCPlanner(Planner):
             coords.append(ci)
         return bool(occ[tuple(coords)])
 
-    def plan(self, observation: np.ndarray, goal: np.ndarray, obstacle_map: Any) -> Plan:
+    def plan(
+        self,
+        observation: np.ndarray,
+        goal: np.ndarray,
+        obstacle_map: Any,
+        *,
+        dynamic_obstacles: list[dict] | None = None,
+    ) -> Plan:
         occ_raw = np.asarray(obstacle_map, dtype=bool)
         ndim = occ_raw.ndim
+        # constant-velocity prediction set: precompute (pos, vel, r2) per
+        # known dynamic obstacle so each rollout step is a cheap distance test.
+        predict: list[tuple[np.ndarray, np.ndarray, float]] = []
+        if self.use_prediction and dynamic_obstacles:
+            for d in dynamic_obstacles:
+                p = np.asarray(d["position"], dtype=float)[:ndim]
+                v = np.asarray(d["velocity"], dtype=float)[:ndim]
+                r = float(d.get("radius", 0.5)) + self.safety_margin
+                predict.append((p, v, r * r))
         occ = inflate_obstacles(occ_raw, self.inflate)
         obs = np.asarray(observation, dtype=float)[:ndim]
         gl = np.asarray(goal, dtype=float)[:ndim]
@@ -130,6 +152,14 @@ class SamplingMPCPlanner(Planner):
                     break
                 if self._occupied(occ, rollout[h]):
                     collision_pen += 1
+                # predicted dynamic obstacles (constant velocity)
+                if predict:
+                    th = h * self.dt_plan
+                    for p0, vv, rr2 in predict:
+                        p_h = p0 + vv * th
+                        if float(np.sum((rollout[h] - p_h) ** 2)) <= rr2:
+                            collision_pen += 1
+                            break
                 cell_h = self._cell(rollout[h], occ.shape)
                 ctg_h = float(ctg[cell_h]) if np.isfinite(ctg[cell_h]) else unreachable_penalty
                 ctg_sum_until += ctg_h
@@ -139,8 +169,18 @@ class SamplingMPCPlanner(Planner):
             smooth_pen = 0.0
             if self._prev_action is not None:
                 smooth_pen = float(np.linalg.norm(v - self._prev_action))
-            if reaches_goal:
+            if reaches_goal and collision_pen == 0:
+                # Clean reach: huge bonus.
                 cost = -1e6 + self.w_smooth * smooth_pen
+            elif reaches_goal:
+                # Reaches goal but with collisions on the way — the bonus is
+                # withheld so a non-reaching, non-colliding alternative wins.
+                ctg_avg = ctg_sum_until / max(1, steps_until)
+                cost = (
+                    self.w_goal * ctg_avg
+                    + self.w_obs * collision_pen
+                    + self.w_smooth * smooth_pen
+                )
             else:
                 ctg_avg = ctg_sum_until / max(1, steps_until)
                 cost = (

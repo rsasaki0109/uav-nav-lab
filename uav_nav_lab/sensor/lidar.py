@@ -108,3 +108,17 @@ class LidarSensor(SensorModel):
         sub_seen[within] = sub_occ[within]
         self._seen[tuple(slices)] = sub_seen
         return self._seen
+
+    def observe_dynamics(
+        self, t: float, true_position: np.ndarray, dynamic_obstacles: list[dict]
+    ) -> list[dict]:
+        pos = np.asarray(true_position, dtype=float)
+        ndim = pos.shape[0]
+        out = []
+        r2 = self.range_m * self.range_m
+        for d in dynamic_obstacles:
+            obs_pos = np.asarray(d["position"], dtype=float)[:ndim]
+            sep2 = float(np.sum((obs_pos - pos[:ndim]) ** 2))
+            if sep2 <= r2:
+                out.append(dict(d))
+        return out
