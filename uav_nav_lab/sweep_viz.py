@@ -19,9 +19,21 @@ import yaml
 from .config import get_dotted
 from .eval.metrics import evaluate_run
 
-_METRICS = [
+_METRICS_DEFAULT = [
     ("success_rate", "success rate", "%", lambda s: s["success_rate"] * 100),
     ("collision_rate", "collision rate", "%", lambda s: s["collision_rate"] * 100),
+    ("avg_speed_mean", "avg speed (m/s)", "", lambda s: s["avg_speed"]["mean"]),
+    ("ate_rms_mean", "ATE rms (m)", "", lambda s: s["ate_rms"]["mean"]),
+]
+
+# Multi-drone runs report a separate `joint_*` block in summary.json; we
+# swap the per-drone-episode rates for the joint ones (the metric an
+# operator would actually report) and keep the continuous metrics intact.
+_METRICS_MULTI = [
+    ("joint_success_rate", "joint success rate", "%",
+     lambda s: s["joint_success_rate"] * 100),
+    ("joint_collision_rate", "joint collision rate", "%",
+     lambda s: s["joint_collision_rate"] * 100),
     ("avg_speed_mean", "avg speed (m/s)", "", lambda s: s["avg_speed"]["mean"]),
     ("ate_rms_mean", "ATE rms (m)", "", lambda s: s["ate_rms"]["mean"]),
 ]
@@ -143,8 +155,12 @@ def sweep_viz(sweep_root: Path) -> Path:
             "Filter or marginalize the manifest before viz-ing."
         )
 
+    # Multi-drone runs surface joint-success / joint-collision in addition
+    # to the per-drone-episode rates; pick the right metric set off the
+    # first run's summary so the sweep figure shows the right view.
+    metrics = _METRICS_MULTI if "joint_success_rate" in runs[0]["summary"] else _METRICS_DEFAULT
     fig, axes = plt.subplots(2, 2, figsize=(11, 9))
-    for ax, (_, label, _, fn) in zip(axes.flat, _METRICS):
+    for ax, (_, label, _, fn) in zip(axes.flat, metrics):
         if len(keys) == 1:
             _line_plot(plt, ax, runs, keys[0], label, fn)
             ax.set_title(label)

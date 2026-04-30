@@ -2,10 +2,18 @@
 # Each plans independently with MPC and observes the other as a moving
 # obstacle through the configured sensor.
 #
-# Ablation ideas:
-#   --param planner.use_prediction=true,false
-#       isolates the effect of constant-velocity peer prediction
-#   --param planner.predictor.velocity_noise_std=0.0,1.0,2.0
+# Validated ablation (n=30 episodes, joint success with Wilson 95% CI):
+#   use_prediction=true  → joint success 86.7% [70.3, 94.7]
+#   use_prediction=false → joint success 30.0% [16.7, 47.9]
+# Non-overlapping CIs confirm peer prediction is essential here.
+#
+# Re-run with:
+#   uav-nav sweep examples/exp_multi_drone.yaml \
+#     --param planner.use_prediction=true,false \
+#     --param num_episodes=30 -j 2
+#
+# Other ablation knobs:
+#   --param planner.predictor.velocity_noise_std=0.0,1.0,2.0,4.0
 #       (after switching predictor.type=noisy_velocity) — peer-tracking
 #       quality vs. mid-air collision rate.
 name: multi_drone_headon
