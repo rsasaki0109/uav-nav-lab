@@ -68,6 +68,28 @@ def test_cli_list_runs() -> None:
     assert args.func(args) == 0
 
 
+def test_3d_viz(tmp_path: Path) -> None:
+    pytest.importorskip("matplotlib")
+    from uav_nav_lab.viz import viz_run
+
+    cfg = ExperimentConfig.from_yaml(EXAMPLES / "exp_3d.yaml")
+    cfg.num_episodes = 1
+    cfg.simulator["max_steps"] = 200
+    run_dir = run_experiment(cfg, tmp_path / "viz_3d")
+    saved = viz_run(run_dir)
+    assert len(saved) == 1
+    assert saved[0].exists() and saved[0].stat().st_size > 0
+
+
+def test_bridge_stubs_registered() -> None:
+    """AirSim and ROS2 backends register at import time but should fail with
+    a clear message if their heavy deps are not installed."""
+    from uav_nav_lab.sim import SIM_REGISTRY
+
+    assert "airsim" in SIM_REGISTRY.names()
+    assert "ros2" in SIM_REGISTRY.names()
+
+
 def test_3d_runs(tmp_path: Path) -> None:
     cfg = ExperimentConfig.from_yaml(EXAMPLES / "exp_3d.yaml")
     cfg.num_episodes = 1
