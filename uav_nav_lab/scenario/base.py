@@ -34,5 +34,11 @@ class Scenario(ABC):
         """Dimension of the scenario (2 for grid_world, 3 for voxel_world)."""
         return int(self.start.shape[0])
 
+    def advance(self, dt: float) -> None:
+        """Step internal state (e.g. dynamic obstacles) forward by `dt`.
+
+        Default: no-op. Scenarios with moving obstacles override this.
+        """
+
 
 SCENARIO_REGISTRY: Registry[Scenario] = Registry("scenario")

@@ -94,14 +94,17 @@ class LidarSensor(SensorModel):
             hi = min(occ.shape[i], center[i] + cells_radius + 1)
             slices.append(slice(lo, hi))
         sub_occ = occ[tuple(slices)]
-        # build coordinate grid for this sub-region
+        # build coordinate grid for this sub-region (cell centers)
         ranges = [np.arange(slices[i].start, slices[i].stop) + 0.5 for i in range(ndim)]
         meshes = np.meshgrid(*ranges, indexing="ij")
         sq = np.zeros_like(meshes[0], dtype=float)
         for i in range(ndim):
             sq += (meshes[i] - center[i] - 0.5) ** 2
         within = sq <= r2
-        # cells that ARE obstacles AND within range = newly observed
-        newly_seen = sub_occ & within
-        self._seen[tuple(slices)] |= newly_seen
+        # Overwrite (not OR) so dynamic obstacles that have moved away are
+        # cleared from memory. Cells outside the visible sphere keep their
+        # previous belief — that is what `memory=True` actually means.
+        sub_seen = self._seen[tuple(slices)]
+        sub_seen[within] = sub_occ[within]
+        self._seen[tuple(slices)] = sub_seen
         return self._seen

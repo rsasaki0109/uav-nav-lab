@@ -71,6 +71,7 @@ class DummySim(SimInterface):
         self._state.position = self._state.position + self._state.velocity * self.dt
         self._state.t += self.dt
         self._step_count += 1
+        self.scenario.advance(self.dt)  # no-op for static-only scenarios
 
         collision = self.scenario.is_collision(self._state.position, self.p.drone_radius)
         goal_reached = bool(

@@ -1,0 +1,57 @@
+# Dynamic obstacles: linear-motion bouncing obstacles cross the drone's path.
+# A* / MPC see only the *current* snapshot at replan time, so an obstacle that
+# was clear when the plan was made can be on the path when the drone arrives.
+# This is where replan_period × obstacle_speed matters most.
+name: basic_dynamic
+seed: 42
+num_episodes: 5
+
+scenario:
+  type: grid_world
+  size: [50, 50]
+  start: [2.0, 2.0]
+  goal: [45.0, 45.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 25
+    seed: 7
+  dynamic_obstacles:
+    - start: [25.0, 10.0]
+      velocity: [0.0, 6.0]   # crosses the diagonal corridor
+      reflect: true
+      radius: 0.8
+    - start: [10.0, 30.0]
+      velocity: [5.0, 0.0]
+      reflect: true
+      radius: 0.8
+    - start: [35.0, 25.0]
+      velocity: [-4.0, 3.0]
+      reflect: true
+      radius: 0.8
+
+simulator:
+  type: dummy_2d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: astar
+  max_speed: 10.0
+  replan_period: 0.2     # frequent replans needed under dynamic threats
+  resolution: 1.0
+  inflate: 1
+
+sensor:
+  type: lidar
+  range: 8.0
+  delay: 0.05
+  position_noise_std: 0.2
+  resolution: 1.0
+  memory: true
+
+output:
+  dir: results/basic_dynamic

@@ -93,6 +93,39 @@ def test_3d_mpc_runs(tmp_path: Path) -> None:
     assert summary["n_episodes"] == 1
 
 
+def test_dynamic_obstacle_motion(tmp_path: Path) -> None:
+    """A dynamic obstacle should appear in occupancy at the right cells over
+    time, and the lidar memory should clear when it moves out of range."""
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+    from uav_nav_lab.sensor import SENSOR_REGISTRY
+
+    cfg = {
+        "size": [20, 20],
+        "start": [2.0, 2.0],
+        "goal": [18.0, 18.0],
+        "obstacles": {"type": "none"},
+        "dynamic_obstacles": [
+            {"start": [10.0, 10.0], "velocity": [5.0, 0.0], "reflect": False, "radius": 0.6}
+        ],
+    }
+    scn = SCENARIO_REGISTRY.get("grid_world").from_config(cfg)
+    occ_t0 = scn.occupancy.copy()
+    assert occ_t0[10, 10]
+    scn.advance(1.0)  # move 5 cells in x
+    assert scn.occupancy[15, 10]
+    assert not scn.occupancy[10, 10]  # the dynamic obstacle is no longer here
+
+    # lidar memory: cell (10,10) was seen as obstacle, then we observe again
+    # with obstacle gone — should be cleared from memory.
+    lidar_cls = SENSOR_REGISTRY.get("lidar")
+    lidar = lidar_cls.from_config({"range": 5.0, "delay": 0.0, "memory": True})
+    lidar.reset(seed=0)
+    seen0 = lidar.observe_map(0.0, np.array([10.0, 10.0]), occ_t0)
+    assert seen0[10, 10]
+    seen1 = lidar.observe_map(1.0, np.array([10.0, 10.0]), scn.occupancy)
+    assert not seen1[10, 10]
+
+
 def test_lidar_sensor_partial_map() -> None:
     """Lidar should only mark obstacles within `range` of the drone, and
     accumulate them across observations when memory=True."""
@@ -113,6 +146,15 @@ def test_lidar_sensor_partial_map() -> None:
     # drone moves close to the far obstacle; both should now be in memory
     seen1 = s.observe_map(0.1, np.array([15.0, 15.0]), occ)
     assert seen1[5, 5] and seen1[15, 15]
+
+
+def test_dynamic_run(tmp_path: Path) -> None:
+    cfg = ExperimentConfig.from_yaml(EXAMPLES / "exp_dynamic.yaml")
+    cfg.num_episodes = 1
+    cfg.simulator["max_steps"] = 400
+    run_dir = run_experiment(cfg, tmp_path / "dyn_run")
+    summary = evaluate_run(run_dir)
+    assert summary["n_episodes"] == 1
 
 
 def test_lidar_run(tmp_path: Path) -> None:
