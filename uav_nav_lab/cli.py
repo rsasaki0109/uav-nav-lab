@@ -80,9 +80,16 @@ def cmd_sweep(args: argparse.Namespace) -> int:
 
 
 def cmd_viz(args: argparse.Namespace) -> int:
+    target = Path(args.run_dir)
+    if (target / "sweep_manifest.json").exists():
+        from .sweep_viz import sweep_viz
+
+        out = sweep_viz(target)
+        print(f"[viz] sweep summary: {out}")
+        return 0
     from .viz import viz_run
 
-    saved = viz_run(Path(args.run_dir), show=bool(args.show))
+    saved = viz_run(target, show=bool(args.show))
     for p in saved:
         print(f"  wrote {p}")
     print(f"[viz] {len(saved)} image(s) saved")

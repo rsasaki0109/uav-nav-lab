@@ -95,6 +95,33 @@ def test_parallel_sweep(tmp_path: Path) -> None:
     assert (out / "sweep_manifest.json").exists()
 
 
+def test_get_dotted() -> None:
+    from uav_nav_lab.config import get_dotted
+
+    d = {"a": {"b": {"c": 7}, "x": "v"}}
+    assert get_dotted(d, "a.b.c") == 7
+    assert get_dotted(d, "a.x") == "v"
+    assert get_dotted(d, "a.b.missing", default=42) == 42
+    assert get_dotted(d, "nope.nope", default=None) is None
+
+
+def test_sweep_viz(tmp_path: Path) -> None:
+    pytest.importorskip("matplotlib")
+    from uav_nav_lab.runner import run_sweep
+    from uav_nav_lab.sweep_viz import sweep_viz
+
+    base = ExperimentConfig.from_yaml(EXAMPLES / "exp_sweep.yaml")
+    base.num_episodes = 1
+    base.simulator["max_steps"] = 200
+    out = run_sweep(
+        base,
+        [("planner.max_speed", "5,10"), ("planner.type", "astar,straight")],
+        tmp_path / "sviz",
+    )
+    img = sweep_viz(out)
+    assert img.exists() and img.stat().st_size > 0
+
+
 def test_viz(tmp_path: Path) -> None:
     pytest.importorskip("matplotlib")
     from uav_nav_lab.viz import viz_run

@@ -88,3 +88,14 @@ def set_dotted(d: dict, dotted_key: str, value: Any) -> dict:
         cur = cur[p]
     cur[parts[-1]] = value
     return d
+
+
+def get_dotted(d: Mapping[str, Any], dotted_key: str, default: Any = None) -> Any:
+    """Read `d['a']['b']['c']` from `'a.b.c'`. Returns `default` if any key missing."""
+    parts = dotted_key.split(".")
+    cur: Any = d
+    for p in parts:
+        if not isinstance(cur, Mapping) or p not in cur:
+            return default
+        cur = cur[p]
+    return cur
