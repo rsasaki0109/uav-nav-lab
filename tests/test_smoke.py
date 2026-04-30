@@ -288,6 +288,36 @@ def test_parallel_sweep(tmp_path: Path) -> None:
     assert (out / "sweep_manifest.json").exists()
 
 
+def test_wilson_ci_bounds() -> None:
+    """Wilson interval should: (1) bracket the point estimate, (2) widen at
+    small N, (3) stay inside [0,1] even at boundary outcomes (0/N or N/N)."""
+    from uav_nav_lab.eval.metrics import _wilson
+
+    p, lo, hi = _wilson(3, 5)
+    assert lo <= p <= hi
+    assert lo > 0 and hi < 1
+    assert (hi - lo) > 0.4  # N=5 is wide
+
+    _, lo, hi = _wilson(50, 100)
+    assert (hi - lo) < 0.2  # N=100 is much tighter
+
+    _, lo, hi = _wilson(0, 5)  # boundary
+    assert lo == 0.0 and 0 < hi < 1
+    _, lo, hi = _wilson(5, 5)  # other boundary
+    assert hi == 1.0 and 0 < lo < 1
+
+
+def test_summary_includes_ci(tmp_path: Path) -> None:
+    cfg = _basic_cfg()
+    run_dir = run_experiment(cfg, tmp_path / "ci_run")
+    summary = evaluate_run(run_dir)
+    assert "success_ci95" in summary
+    lo, hi = summary["success_ci95"]
+    assert 0.0 <= lo <= summary["success_rate"] <= hi <= 1.0
+    assert "ci_lo" in summary["avg_speed"]
+    assert "sem" in summary["avg_speed"]
+
+
 def test_get_dotted() -> None:
     from uav_nav_lab.config import get_dotted
 

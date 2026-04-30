@@ -9,16 +9,52 @@ Per-episode metrics:
   - ATE: RMS of (observed - true) position. With a delayed/noisy sensor this
     is what the planner had to work with vs. ground truth — i.e. perception error.
 
-Run-level metrics aggregate across episodes (mean, std, success rate, etc.).
+Run-level metrics aggregate across episodes:
+  - Binary outcome rates use the Wilson score interval (95%) — robust at
+    small N and near boundaries (rates of 0% / 100%), unlike the normal
+    approximation.
+  - Continuous metrics get mean ± 1.96 · SEM (= std / sqrt(N)). Good enough
+    for the N=3-50 range typical of replanning sweeps; falls back to a 0
+    half-width when N=1.
 """
 
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+
+_Z95 = 1.959963984540054  # two-sided 95% normal quantile
+
+
+def _wilson(successes: int, n: int, z: float = _Z95) -> tuple[float, float, float]:
+    """95% Wilson score interval. Returns (point_estimate, lower, upper)."""
+    if n <= 0:
+        return 0.0, 0.0, 0.0
+    p = successes / n
+    z2 = z * z
+    denom = 1.0 + z2 / n
+    center = (p + z2 / (2.0 * n)) / denom
+    half = (z * math.sqrt((p * (1.0 - p) + z2 / (4.0 * n)) / n)) / denom
+    return p, max(0.0, center - half), min(1.0, center + half)
+
+
+def _continuous_ci(values: np.ndarray, z: float = _Z95) -> dict[str, float]:
+    n = int(values.size)
+    if n == 0:
+        return {"mean": 0.0, "std": 0.0, "sem": 0.0, "ci_lo": 0.0, "ci_hi": 0.0,
+                "min": 0.0, "max": 0.0, "n": 0}
+    mean = float(values.mean())
+    std = float(values.std(ddof=1)) if n > 1 else 0.0
+    sem = std / math.sqrt(n) if n > 1 else 0.0
+    half = z * sem
+    return {"mean": mean, "std": std, "sem": sem,
+            "ci_lo": mean - half, "ci_hi": mean + half,
+            "min": float(values.min()), "max": float(values.max()), "n": n}
 
 
 def summarize_episode(ep: dict[str, Any]) -> dict[str, Any]:
@@ -69,14 +105,20 @@ def evaluate_run(run_dir: Path) -> dict[str, Any]:
 
     def _agg(key: str) -> dict[str, float]:
         vals = np.asarray([e[key] for e in per_ep], dtype=float)
-        return {"mean": float(vals.mean()), "std": float(vals.std()), "min": float(vals.min()), "max": float(vals.max())}
+        return _continuous_ci(vals)
 
+    s_p, s_lo, s_hi = _wilson(successes, n)
+    c_p, c_lo, c_hi = _wilson(collisions, n)
+    t_p, t_lo, t_hi = _wilson(timeouts, n)
     summary = {
         "run_dir": str(run_dir),
         "n_episodes": n,
-        "success_rate": successes / n,
-        "collision_rate": collisions / n,
-        "timeout_rate": timeouts / n,
+        "success_rate": s_p,
+        "success_ci95": [s_lo, s_hi],
+        "collision_rate": c_p,
+        "collision_ci95": [c_lo, c_hi],
+        "timeout_rate": t_p,
+        "timeout_ci95": [t_lo, t_hi],
         "final_t": _agg("final_t"),
         "path_length": _agg("path_length"),
         "avg_speed": _agg("avg_speed"),
@@ -90,19 +132,26 @@ def evaluate_run(run_dir: Path) -> dict[str, Any]:
     return summary
 
 
+def _fmt_rate(p: float, ci: list[float]) -> str:
+    return f"{p:.1%}  [{ci[0]:.1%}, {ci[1]:.1%}]"
+
+
+def _fmt_cont(stats: dict, fmt: str = ".2f", unit: str = "") -> str:
+    half = (stats["ci_hi"] - stats["ci_lo"]) / 2.0
+    return f"{stats['mean']:{fmt}}{unit} ± {half:{fmt}}{unit} (n={stats['n']})"
+
+
 def format_summary_text(summary: dict[str, Any]) -> str:
     n = summary["n_episodes"]
     lines = [
         f"run: {summary['run_dir']}",
         f"  episodes:       {n}",
-        f"  success rate:   {summary['success_rate']:.2%}",
-        f"  collision rate: {summary['collision_rate']:.2%}",
-        f"  timeout rate:   {summary['timeout_rate']:.2%}",
-        f"  avg speed:      {summary['avg_speed']['mean']:.2f} m/s "
-        f"(±{summary['avg_speed']['std']:.2f})",
-        f"  path length:    {summary['path_length']['mean']:.2f} m "
-        f"(±{summary['path_length']['std']:.2f})",
-        f"  replans/ep:     {summary['replans']['mean']:.2f}",
-        f"  ATE (rms):      {summary['ate_rms']['mean']:.3f} m",
+        f"  success rate:   {_fmt_rate(summary['success_rate'], summary['success_ci95'])}",
+        f"  collision rate: {_fmt_rate(summary['collision_rate'], summary['collision_ci95'])}",
+        f"  timeout rate:   {_fmt_rate(summary['timeout_rate'], summary['timeout_ci95'])}",
+        f"  avg speed:      {_fmt_cont(summary['avg_speed'], unit=' m/s')}",
+        f"  path length:    {_fmt_cont(summary['path_length'], unit=' m')}",
+        f"  replans/ep:     {_fmt_cont(summary['replans'], fmt='.1f')}",
+        f"  ATE (rms):      {_fmt_cont(summary['ate_rms'], fmt='.3f', unit=' m')}",
     ]
     return "\n".join(lines)
