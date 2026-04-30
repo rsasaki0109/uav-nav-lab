@@ -1,0 +1,44 @@
+# A* + lidar sensor (range-limited perception with map memory).
+# The planner only sees obstacles the drone has actually flown near. As the
+# range shrinks the drone stops "knowing" about distant obstacles and ends
+# up replanning more often as it discovers them late.
+name: basic_lidar
+seed: 42
+num_episodes: 5
+
+scenario:
+  type: grid_world
+  size: [50, 50]
+  start: [2.0, 2.0]
+  goal: [45.0, 45.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 40
+    seed: 7
+
+simulator:
+  type: dummy_2d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: astar
+  max_speed: 8.0
+  replan_period: 0.3   # frequent replans needed: the map keeps growing
+  resolution: 1.0
+  inflate: 1
+
+sensor:
+  type: lidar
+  range: 6.0           # meters of visibility
+  delay: 0.05
+  position_noise_std: 0.2
+  resolution: 1.0
+  memory: true
+
+output:
+  dir: results/basic_lidar

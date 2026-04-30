@@ -97,7 +97,8 @@ def _run_episode(
 
         if plan is None or (t - last_replan_t) >= replan_period:
             t0 = time.perf_counter()
-            plan = planner.plan(observation, sim.goal, sim.obstacle_map)
+            perceived_map = sensor.observe_map(t, state.position, sim.obstacle_map)
+            plan = planner.plan(observation, sim.goal, perceived_map)
             planner_dt_ms = (time.perf_counter() - t0) * 1000.0
             last_replan_t = t
             rec.log_replan(t=t, plan_length=int(plan.waypoints.shape[0]), planner_dt_ms=planner_dt_ms)

@@ -93,6 +93,37 @@ def test_3d_mpc_runs(tmp_path: Path) -> None:
     assert summary["n_episodes"] == 1
 
 
+def test_lidar_sensor_partial_map() -> None:
+    """Lidar should only mark obstacles within `range` of the drone, and
+    accumulate them across observations when memory=True."""
+    from uav_nav_lab.sensor import SENSOR_REGISTRY
+
+    occ = np.zeros((20, 20), dtype=bool)
+    occ[5, 5] = True   # near start
+    occ[15, 15] = True  # far from start
+
+    sensor_cls = SENSOR_REGISTRY.get("lidar")
+    s = sensor_cls.from_config({"range": 4.0, "delay": 0.0, "resolution": 1.0, "memory": True})
+    s.reset(seed=0)
+
+    seen0 = s.observe_map(0.0, np.array([5.0, 5.0]), occ)
+    assert seen0[5, 5]            # close obstacle is visible
+    assert not seen0[15, 15]      # distant one is not
+
+    # drone moves close to the far obstacle; both should now be in memory
+    seen1 = s.observe_map(0.1, np.array([15.0, 15.0]), occ)
+    assert seen1[5, 5] and seen1[15, 15]
+
+
+def test_lidar_run(tmp_path: Path) -> None:
+    cfg = ExperimentConfig.from_yaml(EXAMPLES / "exp_lidar.yaml")
+    cfg.num_episodes = 1
+    cfg.simulator["max_steps"] = 600
+    run_dir = run_experiment(cfg, tmp_path / "lidar_run")
+    summary = evaluate_run(run_dir)
+    assert summary["n_episodes"] == 1
+
+
 def test_sample_unit_directions_3d() -> None:
     from uav_nav_lab.planner._grid import sample_unit_directions
 

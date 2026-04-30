@@ -27,5 +27,16 @@ class SensorModel(ABC):
     @abstractmethod
     def observe(self, t: float, true_position: np.ndarray) -> np.ndarray: ...
 
+    def observe_map(
+        self, t: float, true_position: np.ndarray, true_obstacle_map: np.ndarray
+    ) -> np.ndarray:
+        """Return the perceived obstacle map.
+
+        Default: passthrough — the planner sees the full map. Range-limited
+        sensors (lidar / depth) override this to return what the sensor has
+        actually observed up to time t.
+        """
+        return true_obstacle_map
+
 
 SENSOR_REGISTRY: Registry[SensorModel] = Registry("sensor")
