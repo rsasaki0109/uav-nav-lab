@@ -251,7 +251,21 @@ def run_experiment_multi(cfg: ExperimentConfig, output_dir: Path) -> Path:
         outcomes = [r.outcome for r in recs]
         for i, rec in enumerate(recs):
             rec.save(output_dir / f"episode_{ep:03d}_drone_{i:02d}.json")
-        joint = "all_success" if all(o == "success" for o in outcomes) else "mixed"
-        print(f"  ep {ep:03d} seed={seed} per-drone={outcomes} joint={joint}")
+        joint_outcome = (
+            "success" if all(o == "success" for o in outcomes)
+            else "collision" if any(o == "collision" for o in outcomes)
+            else "timeout"
+        )
+        joint = {
+            "meta": {"episode": ep, "seed": seed, "n_drones": n},
+            "outcome": joint_outcome,
+            "per_drone_outcomes": outcomes,
+            "drone_names": [d.name for d in scenario.drones],
+            "final_t": max(float(r.summary.get("final_t", 0.0)) for r in recs),
+        }
+        with (output_dir / f"episode_{ep:03d}_joint.json").open("w", encoding="utf-8") as f:
+            import json as _json
+            _json.dump(joint, f, indent=2)
+        print(f"  ep {ep:03d} seed={seed} per-drone={outcomes} joint={joint_outcome}")
 
     return output_dir

@@ -89,7 +89,13 @@ def summarize_episode(ep: dict[str, Any]) -> dict[str, Any]:
 
 def evaluate_run(run_dir: Path) -> dict[str, Any]:
     run_dir = Path(run_dir)
-    episode_files = sorted(run_dir.glob("episode_*.json"))
+    # Multi-drone runs write per-drone trajectory logs *and* a separate
+    # `episode_<j>_joint.json` summary that captures per-drone outcomes for
+    # joint-success aggregation. The trajectory glob below intentionally
+    # excludes those joint files so we do not double-count them.
+    episode_files = sorted(
+        f for f in run_dir.glob("episode_*.json") if not f.name.endswith("_joint.json")
+    )
     if not episode_files:
         raise FileNotFoundError(f"no episode_*.json under {run_dir}")
     per_ep = []
@@ -126,6 +132,33 @@ def evaluate_run(run_dir: Path) -> dict[str, Any]:
         "ate_rms": _agg("ate_rms"),
         "episodes": per_ep,
     }
+    # Joint (multi-drone) aggregation: read the per-episode joint summaries
+    # if present and append a `joint_*` block to the run summary. Per-drone
+    # rates above are still useful, but the joint rate is the metric an
+    # operator would actually report ("did *the mission* succeed?").
+    joint_files = sorted(run_dir.glob("episode_*_joint.json"))
+    if joint_files:
+        joint_eps = []
+        for jf in joint_files:
+            with jf.open("r", encoding="utf-8") as f:
+                joint_eps.append(json.load(f))
+        n_j = len(joint_eps)
+        j_succ = sum(1 for e in joint_eps if e["outcome"] == "success")
+        j_coll = sum(1 for e in joint_eps if e["outcome"] == "collision")
+        j_to = sum(1 for e in joint_eps if e["outcome"] == "timeout")
+        sp, slo, shi = _wilson(j_succ, n_j)
+        cp, clo, chi = _wilson(j_coll, n_j)
+        tp, tlo, thi = _wilson(j_to, n_j)
+        summary["joint_n_episodes"] = n_j
+        summary["joint_n_drones"] = int(joint_eps[0]["meta"].get("n_drones", 0))
+        summary["joint_success_rate"] = sp
+        summary["joint_success_ci95"] = [slo, shi]
+        summary["joint_collision_rate"] = cp
+        summary["joint_collision_ci95"] = [clo, chi]
+        summary["joint_timeout_rate"] = tp
+        summary["joint_timeout_ci95"] = [tlo, thi]
+        summary["joint_episodes"] = joint_eps
+
     out_path = run_dir / "summary.json"
     with out_path.open("w", encoding="utf-8") as f:
         json.dump(summary, f, indent=2)
@@ -143,9 +176,10 @@ def _fmt_cont(stats: dict, fmt: str = ".2f", unit: str = "") -> str:
 
 def format_summary_text(summary: dict[str, Any]) -> str:
     n = summary["n_episodes"]
+    drone_label = "drone-episodes" if "joint_n_episodes" in summary else "episodes"
     lines = [
         f"run: {summary['run_dir']}",
-        f"  episodes:       {n}",
+        f"  {drone_label}:  {n}",
         f"  success rate:   {_fmt_rate(summary['success_rate'], summary['success_ci95'])}",
         f"  collision rate: {_fmt_rate(summary['collision_rate'], summary['collision_ci95'])}",
         f"  timeout rate:   {_fmt_rate(summary['timeout_rate'], summary['timeout_ci95'])}",
@@ -154,4 +188,14 @@ def format_summary_text(summary: dict[str, Any]) -> str:
         f"  replans/ep:     {_fmt_cont(summary['replans'], fmt='.1f')}",
         f"  ATE (rms):      {_fmt_cont(summary['ate_rms'], fmt='.3f', unit=' m')}",
     ]
+    if "joint_n_episodes" in summary:
+        nj = summary["joint_n_episodes"]
+        nd = summary.get("joint_n_drones", 0)
+        lines += [
+            "",
+            f"  joint (n={nd} drones, {nj} episodes):",
+            f"    success rate:   {_fmt_rate(summary['joint_success_rate'], summary['joint_success_ci95'])}",
+            f"    collision rate: {_fmt_rate(summary['joint_collision_rate'], summary['joint_collision_ci95'])}",
+            f"    timeout rate:   {_fmt_rate(summary['joint_timeout_rate'], summary['joint_timeout_ci95'])}",
+        ]
     return "\n".join(lines)

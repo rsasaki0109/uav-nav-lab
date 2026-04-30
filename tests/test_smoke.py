@@ -497,3 +497,40 @@ def test_multi_drone_scenario_validates_drones() -> None:
     with pytest.raises(ValueError):
         # missing `drones` block must be rejected
         cls.from_config({"size": [10, 10], "obstacles": {"type": "none"}})
+
+
+def test_multi_drone_joint_metrics_in_summary(tmp_path: Path) -> None:
+    """Joint episode summaries are picked up and aggregated separately from
+    the per-drone-episode rows."""
+    cfg = ExperimentConfig.from_yaml(EXAMPLES / "exp_multi_drone.yaml")
+    cfg.num_episodes = 2
+    cfg.simulator["max_steps"] = 600
+    run_dir = run_experiment(cfg, tmp_path / "multi_joint")
+    # joint files exist alongside per-drone trajectories
+    assert sorted(p.name for p in run_dir.glob("episode_*_joint.json")) == [
+        "episode_000_joint.json",
+        "episode_001_joint.json",
+    ]
+    summary = evaluate_run(run_dir)
+    # per-drone-episode rows: 2 episodes × 2 drones
+    assert summary["n_episodes"] == 4
+    # joint rows: 2 episodes
+    assert summary["joint_n_episodes"] == 2
+    assert summary["joint_n_drones"] == 2
+    assert "joint_success_rate" in summary
+    assert "joint_collision_ci95" in summary
+
+
+def test_multi_drone_viz_groups_drones_per_episode(tmp_path: Path) -> None:
+    pytest.importorskip("matplotlib")
+    from uav_nav_lab.viz import viz_run
+
+    cfg = ExperimentConfig.from_yaml(EXAMPLES / "exp_multi_drone.yaml")
+    cfg.num_episodes = 2
+    cfg.simulator["max_steps"] = 400
+    run_dir = run_experiment(cfg, tmp_path / "multi_viz")
+    saved = viz_run(run_dir)
+    # one PNG per episode (not per drone)
+    assert len(saved) == 2
+    for p in saved:
+        assert p.exists() and p.stat().st_size > 0

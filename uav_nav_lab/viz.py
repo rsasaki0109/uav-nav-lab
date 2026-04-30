@@ -39,6 +39,9 @@ def _load_run(run_dir: Path) -> tuple[ExperimentConfig, list[dict]]:
         cfg = ExperimentConfig.from_dict(yaml.safe_load(f))
     episodes = []
     for ef in sorted(run_dir.glob("episode_*.json")):
+        # Skip the multi-drone joint summaries — they have no trajectory steps.
+        if ef.name.endswith("_joint.json"):
+            continue
         with ef.open("r", encoding="utf-8") as f:
             episodes.append(json.load(f))
     if not episodes:
@@ -120,6 +123,43 @@ def _title_for(ep: dict) -> str:
     )
 
 
+def _render_episode_multi_2d(plt, ax, cfg, drones_eps: list[dict], scenario) -> None:
+    """Render all drones from a single multi-drone episode on one ax."""
+    occ = scenario.occupancy
+    res = scenario.resolution
+    ax.imshow(
+        occ.T,
+        origin="lower",
+        extent=(0, occ.shape[0] * res, 0, occ.shape[1] * res),
+        cmap="Greys",
+        alpha=0.4,
+        interpolation="nearest",
+    )
+    palette = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple",
+               "tab:brown", "tab:pink", "tab:olive"]
+    for ep in drones_eps:
+        i = int(ep["meta"].get("drone_id", 0))
+        color = palette[i % len(palette)]
+        steps = ep["steps"]
+        if steps:
+            tx = [s["true_pos"][0] for s in steps]
+            ty = [s["true_pos"][1] for s in steps]
+            label = f"{ep['meta'].get('drone_name', f'd{i}')} ({ep.get('outcome', '?')})"
+            ax.plot(tx, ty, "-", color=color, lw=1.5, label=label)
+        if i < len(scenario.drones):
+            d = scenario.drones[i]
+            ax.plot(d.start[0], d.start[1], "o", color=color, ms=10, mec="black", mew=0.5)
+            ax.plot(d.goal[0], d.goal[1], "*", color=color, ms=14, mec="black", mew=0.5)
+    ax.set_xlim(0, occ.shape[0] * res)
+    ax.set_ylim(0, occ.shape[1] * res)
+    ax.set_aspect("equal")
+    ep_idx = drones_eps[0]["meta"]["episode"]
+    outcomes = [e.get("outcome", "?") for e in drones_eps]
+    joint = "all_success" if all(o == "success" for o in outcomes) else "mixed"
+    ax.set_title(f"ep {ep_idx:03d}  joint={joint}  per-drone={outcomes}")
+    ax.legend(loc="lower right", fontsize=8)
+
+
 def viz_run(run_dir: Path, *, show: bool = False) -> list[Path]:
     plt = _need_mpl()
     run_dir = Path(run_dir)
@@ -131,8 +171,30 @@ def viz_run(run_dir: Path, *, show: bool = False) -> list[Path]:
         raise NotImplementedError(
             f"viz_run supports 2D / 3D scenarios (got ndim={scenario.ndim})."
         )
-    # reseed each episode the way the runner did so obstacle layouts match
+
+    # multi-drone runs: group per-drone logs by episode and render together
+    is_multi = str(cfg.scenario.get("type", "")) == "multi_drone_grid"
     saved: list[Path] = []
+    if is_multi and not is_3d:
+        by_ep: dict[int, list[dict]] = {}
+        for ep in episodes:
+            by_ep.setdefault(int(ep["meta"]["episode"]), []).append(ep)
+        for ep_idx in sorted(by_ep):
+            drones_eps = sorted(by_ep[ep_idx], key=lambda e: e["meta"].get("drone_id", 0))
+            seed = drones_eps[0]["meta"]["seed"]
+            scenario.reseed(seed)
+            fig, ax = plt.subplots(figsize=(8, 5))
+            _render_episode_multi_2d(plt, ax, cfg, drones_eps, scenario)
+            out = run_dir / f"episode_{ep_idx:03d}.png"
+            fig.tight_layout()
+            fig.savefig(out, dpi=120)
+            if show:  # pragma: no cover
+                plt.show()
+            plt.close(fig)
+            saved.append(out)
+        return saved
+
+    # single-drone (or 3D multi) — original per-episode rendering
     for ep in episodes:
         seed = ep["meta"]["seed"]
         scenario.reseed(seed)
