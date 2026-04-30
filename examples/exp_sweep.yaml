@@ -1,0 +1,35 @@
+# Base config used by `uav-nav sweep`. Override fields with --param.
+# Example:
+#   uav-nav sweep examples/exp_sweep.yaml \
+#       --param planner.max_speed=5:30:5 \
+#       --param planner.replan_period=0.2,0.5,1.0
+name: sweep_base
+seed: 42
+num_episodes: 3
+
+scenario:
+  type: grid_world
+  size: [50, 50]
+  start: [2.0, 2.0]
+  goal: [45.0, 45.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 60
+    seed: 7
+
+simulator:
+  type: dummy_2d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+
+planner:
+  type: astar
+  max_speed: 10.0
+  replan_period: 0.5
+
+sensor:
+  type: delayed
+  delay: 0.1
+  position_noise_std: 0.2
