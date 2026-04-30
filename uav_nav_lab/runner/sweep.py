@@ -25,8 +25,36 @@ from ..config import ExperimentConfig, set_dotted
 from .experiment import run_experiment
 
 
+def _split_top_level(spec: str, sep: str = ",") -> list[str]:
+    """Split on `sep` while respecting `[...]` brackets — so vector values
+    like `[3,0]` survive a comma-separated list."""
+    out: list[str] = []
+    depth = 0
+    cur: list[str] = []
+    for c in spec:
+        if c == "[":
+            depth += 1
+            cur.append(c)
+        elif c == "]":
+            depth -= 1
+            cur.append(c)
+        elif c == sep and depth == 0:
+            out.append("".join(cur))
+            cur = []
+        else:
+            cur.append(c)
+    out.append("".join(cur))
+    return out
+
+
 def _parse_value(s: str) -> Any:
     s = s.strip()
+    # vector / list literal: [a, b, c]
+    if s.startswith("[") and s.endswith("]"):
+        inner = s[1:-1].strip()
+        if not inner:
+            return []
+        return [_parse_value(p) for p in _split_top_level(inner)]
     # bool literals (so `--param planner.use_prediction=true,false` works)
     low = s.lower()
     if low == "true":
@@ -69,8 +97,8 @@ def _parse_spec(spec: str) -> list[Any]:
                 v += float(step)
             return vals
         return list(range(int(start), int(stop), int(step)))
-    if "," in spec:
-        return [_parse_value(p) for p in spec.split(",")]
+    if "," in spec or "[" in spec:
+        return [_parse_value(p) for p in _split_top_level(spec)]
     return [_parse_value(spec)]
 
 

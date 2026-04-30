@@ -1,0 +1,54 @@
+# Constant-wind disturbance + optional wind-aware MPC.
+# Sweep:
+#   --param simulator.disturbance.wind=[0,0],[3,0],[6,0]   # x-wind strength
+#   --param planner.wind=[0,0],[3,0],[6,0]                  # planner's belief
+# When wind matches reality the rollout is well-calibrated; otherwise the
+# drone is blown off the predicted path.
+name: wind_baseline
+seed: 42
+num_episodes: 5
+
+scenario:
+  type: grid_world
+  size: [50, 50]
+  start: [2.0, 2.0]
+  goal: [45.0, 25.0]      # straight east — wind will sideslip a y-blowing drone
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 30
+    seed: 7
+
+simulator:
+  type: dummy_2d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+  disturbance:
+    wind: [0.0, 3.0]      # 3 m/s northward wind
+    gust_std: 0.5
+
+planner:
+  type: mpc
+  max_speed: 8.0
+  replan_period: 0.3
+  horizon: 60
+  dt_plan: 0.05
+  n_samples: 32
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  safety_margin: 0.5
+  use_prediction: true
+  wind: [0.0, 0.0]        # default: planner does not know about wind
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/wind_baseline

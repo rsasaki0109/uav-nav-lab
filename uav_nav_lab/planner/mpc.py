@@ -40,6 +40,7 @@ class SamplingMPCPlanner(Planner):
         goal_radius: float = 1.5,
         safety_margin: float = 0.4,
         use_prediction: bool = True,
+        wind: tuple[float, ...] = (),
         w_goal: float = 1.0,
         w_obs: float = 100.0,
         w_smooth: float = 0.05,
@@ -53,6 +54,7 @@ class SamplingMPCPlanner(Planner):
         self.goal_radius = float(goal_radius)
         self.safety_margin = float(safety_margin)
         self.use_prediction = bool(use_prediction)
+        self._wind = np.asarray(wind, dtype=float) if wind else None
         self.w_goal = float(w_goal)
         self.w_obs = float(w_obs)
         self.w_smooth = float(w_smooth)
@@ -70,6 +72,7 @@ class SamplingMPCPlanner(Planner):
             goal_radius=float(cfg.get("goal_radius", 1.5)),
             safety_margin=float(cfg.get("safety_margin", 0.4)),
             use_prediction=bool(cfg.get("use_prediction", True)),
+            wind=tuple(cfg.get("wind", ())),
             w_goal=float(cfg.get("w_goal", 1.0)),
             w_obs=float(cfg.get("w_obs", 100.0)),
             w_smooth=float(cfg.get("w_smooth", 0.05)),
@@ -131,6 +134,14 @@ class SamplingMPCPlanner(Planner):
         base = to_goal / dist_goal
         directions = sample_unit_directions(ndim, self.n_samples, base)
         actions = directions * self.max_speed
+        # Per-step displacement from external wind (if known to the planner).
+        # Truncate / pad to scenario ndim so YAML can stay 2D-friendly.
+        if self._wind is not None and self._wind.size > 0:
+            wind_step = np.zeros(ndim)
+            n = min(self._wind.size, ndim)
+            wind_step[:n] = self._wind[:n]
+        else:
+            wind_step = None
 
         best_cost = np.inf
         best_rollout: np.ndarray | None = None
@@ -145,7 +156,10 @@ class SamplingMPCPlanner(Planner):
             steps_until = 0
             reaches_goal = False
             for h in range(1, self.horizon + 1):
-                rollout[h] = rollout[h - 1] + v * self.dt_plan
+                step = v * self.dt_plan
+                if wind_step is not None:
+                    step = step + wind_step * self.dt_plan
+                rollout[h] = rollout[h - 1] + step
                 d2 = float(np.sum((rollout[h] - gl) ** 2))
                 if d2 <= gr2:
                     reaches_goal = True

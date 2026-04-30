@@ -69,7 +69,8 @@ def _sorted_axis(values: set[Any]) -> list[Any]:
     try:
         return sorted(values, key=float)
     except (TypeError, ValueError):
-        return sorted(values, key=str)
+        pass
+    return sorted(values, key=str)
 
 
 def _line_plot(plt, ax, runs, key: str, metric_label: str, value_fn) -> None:
@@ -100,12 +101,15 @@ def _line_plot(plt, ax, runs, key: str, metric_label: str, value_fn) -> None:
 def _heatmap(plt, ax, runs, kx: str, ky: str, metric_label: str, value_fn) -> None:
     import numpy as np
 
-    xs_set = _sorted_axis({r["params"][kx] for r in runs})
-    ys_set = _sorted_axis({r["params"][ky] for r in runs})
+    def _hashable(v: Any) -> Any:
+        return tuple(v) if isinstance(v, list) else v
+
+    xs_set = _sorted_axis({_hashable(r["params"][kx]) for r in runs})
+    ys_set = _sorted_axis({_hashable(r["params"][ky]) for r in runs})
     grid = np.full((len(ys_set), len(xs_set)), np.nan, dtype=float)
     for r in runs:
-        i = ys_set.index(r["params"][ky])
-        j = xs_set.index(r["params"][kx])
+        i = ys_set.index(_hashable(r["params"][ky]))
+        j = xs_set.index(_hashable(r["params"][kx]))
         grid[i, j] = value_fn(r["summary"])
     im = ax.imshow(grid, origin="lower", aspect="auto", cmap="viridis")
     ax.set_xticks(range(len(xs_set)))

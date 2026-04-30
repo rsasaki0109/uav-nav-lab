@@ -22,6 +22,10 @@ class _DummyParams:
     max_accel: float = 50.0
     goal_radius: float = 1.0
     drone_radius: float = 0.4
+    # Constant wind (m/s) added to drone velocity each step, plus optional
+    # Gaussian gust on top. Ndim is detected from the scenario at construction.
+    wind: tuple[float, ...] = ()
+    gust_std: float = 0.0
 
 
 class DummySim(SimInterface):
@@ -38,21 +42,30 @@ class DummySim(SimInterface):
         self._ndim = scenario.ndim
         self._state: SimState | None = None
         self._step_count = 0
+        wind = np.asarray(params.wind, dtype=float) if params.wind else np.zeros(self._ndim)
+        if wind.shape[0] < self._ndim:
+            wind = np.concatenate([wind, np.zeros(self._ndim - wind.shape[0])])
+        self._wind = wind[: self._ndim]
+        self._rng = np.random.default_rng()
 
     @classmethod
     def from_config(cls, cfg: Mapping[str, Any], scenario: Any) -> "DummySim":
+        dist = dict(cfg.get("disturbance", {}))
         params = _DummyParams(
             dt=float(cfg.get("dt", 0.05)),
             max_steps=int(cfg.get("max_steps", 2000)),
             max_accel=float(cfg.get("max_accel", 50.0)),
             goal_radius=float(cfg.get("goal_radius", 1.0)),
             drone_radius=float(cfg.get("drone_radius", 0.4)),
+            wind=tuple(dist.get("wind", ())),
+            gust_std=float(dist.get("gust_std", 0.0)),
         )
         return cls(params, scenario)
 
     def reset(self, *, seed: int | None = None) -> SimState:
         if seed is not None:
             self.scenario.reseed(seed)
+            self._rng = np.random.default_rng(seed)
         start = np.asarray(self.scenario.start, dtype=float)
         self._state = SimState(t=0.0, position=start.copy(), velocity=np.zeros(self._ndim))
         self._step_count = 0
@@ -68,7 +81,16 @@ class DummySim(SimInterface):
         if norm > max_dv:
             dv *= max_dv / norm
         self._state.velocity = self._state.velocity + dv
-        self._state.position = self._state.position + self._state.velocity * self.dt
+        # external disturbance: wind + gust. Affects position but does not
+        # alter the controller's velocity tracking — the drone is "blown".
+        disturbance = self._wind.copy()
+        if self.p.gust_std > 0.0:
+            disturbance = disturbance + self._rng.normal(
+                0.0, self.p.gust_std, size=self._ndim
+            )
+        self._state.position = self._state.position + (
+            self._state.velocity + disturbance
+        ) * self.dt
         self._state.t += self.dt
         self._step_count += 1
         self.scenario.advance(self.dt)  # no-op for static-only scenarios

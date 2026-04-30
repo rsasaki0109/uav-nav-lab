@@ -288,6 +288,40 @@ def test_parallel_sweep(tmp_path: Path) -> None:
     assert (out / "sweep_manifest.json").exists()
 
 
+def test_dummy_sim_wind_blows_drone() -> None:
+    """A drone with zero command + non-zero wind should drift along the wind."""
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+    from uav_nav_lab.sim import SIM_REGISTRY
+
+    scn_cfg = {
+        "size": [50, 50], "start": [10.0, 10.0], "goal": [40.0, 40.0],
+        "obstacles": {"type": "none"},
+    }
+    scn = SCENARIO_REGISTRY.get("grid_world").from_config(scn_cfg)
+    sim_cfg = {
+        "dt": 0.1, "max_steps": 100, "max_accel": 100.0,
+        "disturbance": {"wind": [3.0, 0.0]},
+    }
+    sim = SIM_REGISTRY.get("dummy_2d").from_config(sim_cfg, scn)
+    sim.reset(seed=0)
+    initial_x = sim.state.position[0]
+    for _ in range(10):
+        sim.step(np.array([0.0, 0.0]))  # zero velocity command
+    drift = sim.state.position[0] - initial_x
+    # 3 m/s wind for 1.0s should produce ~3m of drift
+    assert 2.5 < drift < 3.5
+
+
+def test_sweep_vector_param_parsing() -> None:
+    from uav_nav_lab.runner.sweep import _parse_spec
+
+    vals = _parse_spec("[0,0],[3,0],[6,0]")
+    assert vals == [[0, 0], [3, 0], [6, 0]]
+    # mixed list + scalar
+    vals = _parse_spec("[0,3]")
+    assert vals == [[0, 3]]
+
+
 def test_wilson_ci_bounds() -> None:
     """Wilson interval should: (1) bracket the point estimate, (2) widen at
     small N, (3) stay inside [0,1] even at boundary outcomes (0/N or N/N)."""
