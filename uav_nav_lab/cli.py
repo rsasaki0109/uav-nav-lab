@@ -6,6 +6,7 @@ Subcommands:
   compare <run_dir> <run_dir> [...]       tabulate multiple runs
   sweep   <exp.yaml> --param k=spec ...   Cartesian-product sweep
   viz     <run_dir>                       render trajectory PNGs
+  anim    <run_dir>                       render animated GIFs (2D)
   list                                    show registered backends
 """
 
@@ -96,6 +97,16 @@ def cmd_viz(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_anim(args: argparse.Namespace) -> int:
+    from .anim import viz_anim
+
+    saved = viz_anim(Path(args.run_dir), fps=int(args.fps))
+    for p in saved:
+        print(f"  wrote {p}")
+    print(f"[anim] {len(saved)} GIF(s) saved")
+    return 0
+
+
 def cmd_list(_: argparse.Namespace) -> int:
     print("planners:  ", ", ".join(PLANNER_REGISTRY.names()))
     print("sensors:   ", ", ".join(SENSOR_REGISTRY.names()))
@@ -138,6 +149,11 @@ def build_parser() -> argparse.ArgumentParser:
     pv.add_argument("run_dir")
     pv.add_argument("--show", action="store_true", help="also open an interactive window")
     pv.set_defaults(func=cmd_viz)
+
+    pa = sub.add_parser("anim", help="render animated GIFs for a 2D run dir")
+    pa.add_argument("run_dir")
+    pa.add_argument("--fps", type=int, default=20, help="output frame rate (default 20)")
+    pa.set_defaults(func=cmd_anim)
 
     pl = sub.add_parser("list", help="list registered backends")
     pl.set_defaults(func=cmd_list)

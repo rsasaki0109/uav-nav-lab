@@ -81,6 +81,21 @@ def test_3d_viz(tmp_path: Path) -> None:
     assert saved[0].exists() and saved[0].stat().st_size > 0
 
 
+def test_anim_gif(tmp_path: Path) -> None:
+    pytest.importorskip("matplotlib")
+    pytest.importorskip("PIL")
+    from uav_nav_lab.anim import viz_anim
+
+    cfg = ExperimentConfig.from_yaml(EXAMPLES / "exp_dynamic.yaml")
+    cfg.num_episodes = 1
+    cfg.simulator["max_steps"] = 80   # very short — keep the test fast
+    run_dir = run_experiment(cfg, tmp_path / "anim_run")
+    saved = viz_anim(run_dir, fps=10)
+    assert len(saved) == 1
+    assert saved[0].suffix == ".gif"
+    assert saved[0].stat().st_size > 1000   # something more than an empty file
+
+
 def test_bridge_stubs_registered() -> None:
     """AirSim and ROS2 backends register at import time but should fail with
     a clear message if their heavy deps are not installed."""
