@@ -92,6 +92,11 @@ def viz_run(run_dir: Path, *, show: bool = False) -> list[Path]:
     cfg, episodes = _load_run(run_dir)
     scenario_cls = SCENARIO_REGISTRY.get(cfg.scenario.get("type", "grid_world"))
     scenario = scenario_cls.from_config(cfg.scenario)
+    if scenario.ndim != 2:
+        raise NotImplementedError(
+            f"viz_run currently supports only 2D scenarios (got ndim={scenario.ndim}). "
+            "Use `uav-nav eval` or `uav-nav viz <sweep_dir>` for higher-D runs."
+        )
     # reseed each episode the way the runner did so obstacle layouts match
     saved: list[Path] = []
     for ep in episodes:

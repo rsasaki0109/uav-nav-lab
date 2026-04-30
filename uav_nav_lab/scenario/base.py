@@ -29,5 +29,10 @@ class Scenario(ABC):
     @abstractmethod
     def goal(self) -> np.ndarray: ...
 
+    @property
+    def ndim(self) -> int:
+        """Dimension of the scenario (2 for grid_world, 3 for voxel_world)."""
+        return int(self.start.shape[0])
+
 
 SCENARIO_REGISTRY: Registry[Scenario] = Registry("scenario")

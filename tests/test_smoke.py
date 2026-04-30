@@ -68,6 +68,20 @@ def test_cli_list_runs() -> None:
     assert args.func(args) == 0
 
 
+def test_3d_runs(tmp_path: Path) -> None:
+    cfg = ExperimentConfig.from_yaml(EXAMPLES / "exp_3d.yaml")
+    cfg.num_episodes = 1
+    cfg.simulator["max_steps"] = 400
+    run_dir = run_experiment(cfg, tmp_path / "3d")
+    summary = evaluate_run(run_dir)
+    assert summary["n_episodes"] == 1
+    # confirm the run was actually 3D (3 components per logged position)
+    import json
+
+    ep0 = json.loads((run_dir / "episode_000.json").read_text())
+    assert len(ep0["steps"][0]["true_pos"]) == 3
+
+
 def test_mpc_runs(tmp_path: Path) -> None:
     cfg = _basic_cfg()
     cfg.planner = {"type": "mpc", "max_speed": 5.0, "replan_period": 0.5, "horizon": 30}

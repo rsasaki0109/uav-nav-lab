@@ -27,8 +27,9 @@ class StraightLinePlanner(Planner):
         )
 
     def plan(self, observation: np.ndarray, goal: np.ndarray, obstacle_map: Any) -> Plan:
-        start = np.asarray(observation, dtype=float)[:2]
-        end = np.asarray(goal, dtype=float)[:2]
+        ndim = int(np.asarray(obstacle_map).ndim) if obstacle_map is not None else 2
+        start = np.asarray(observation, dtype=float)[:ndim]
+        end = np.asarray(goal, dtype=float)[:ndim]
         ts = np.linspace(0.0, 1.0, self.samples + 1)[1:]
         wps = start[None, :] + (end - start)[None, :] * ts[:, None]
         return Plan(waypoints=wps, meta={"planner": "straight"})

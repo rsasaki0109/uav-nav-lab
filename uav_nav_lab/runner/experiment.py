@@ -28,15 +28,17 @@ def _follow_plan(plan: Plan, observation: np.ndarray, max_speed: float) -> np.nd
     have already been overtaken due to sensor lag / noise.
     """
     if plan.target_velocity is not None:
-        v = np.asarray(plan.target_velocity, dtype=float).reshape(2)
+        v = np.asarray(plan.target_velocity, dtype=float).ravel()
         n = float(np.linalg.norm(v))
         if n > max_speed:
             v = v * (max_speed / n)
         return v
     if plan.is_empty:
-        return np.zeros(2)
-    obs = np.asarray(observation, dtype=float)[:2]
+        ndim = int(np.asarray(observation).shape[0])
+        return np.zeros(ndim)
     wps = plan.waypoints
+    ndim = int(wps.shape[1])
+    obs = np.asarray(observation, dtype=float)[:ndim]
     dists = np.linalg.norm(wps - obs[None, :], axis=1)
     closest = int(np.argmin(dists))
     lookahead = max(1.5, 0.3 * max_speed)
@@ -48,7 +50,7 @@ def _follow_plan(plan: Plan, observation: np.ndarray, max_speed: float) -> np.nd
     vec = wps[target_idx] - obs
     n = float(np.linalg.norm(vec))
     if n < 1e-9:
-        return np.zeros(2)
+        return np.zeros(ndim)
     return (vec / n) * max_speed
 
 
