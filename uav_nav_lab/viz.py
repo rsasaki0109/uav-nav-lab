@@ -104,7 +104,9 @@ def _render_episode_3d(plt, ax, cfg, ep, scenario) -> None:
                 break
     ax.scatter(*scenario.start, c="green", s=80, label="start")
     ax.scatter(*scenario.goal, c="red", marker="*", s=160, label="goal")
-    ax.set_xlabel("x"); ax.set_ylabel("y"); ax.set_zlabel("z")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
     ax.set_title(_title_for(ep))
     ax.legend(loc="upper left", fontsize=8)
 

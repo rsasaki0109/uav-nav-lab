@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 import numpy as np  # noqa: F401
@@ -114,7 +113,6 @@ def test_3d_runs(tmp_path: Path) -> None:
     assert summary["n_episodes"] == 1
     # confirm the run was actually 3D (3 components per logged position)
     import json
-
     ep0 = json.loads((run_dir / "episode_000.json").read_text())
     assert len(ep0["steps"][0]["true_pos"]) == 3
 

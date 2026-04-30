@@ -89,7 +89,6 @@ def _run_episode(
 
     plan: Plan | None = None
     last_replan_t = -float("inf")
-    dt = sim.dt
 
     for step in range(max_steps):
         t = state.t

@@ -59,7 +59,7 @@ def _animate_episode_2d(plt, animation, cfg: ExperimentConfig, ep: dict, scenari
     ax.set_ylim(0, ny * res)
     ax.set_aspect("equal")
 
-    static_im = ax.imshow(
+    ax.imshow(
         scenario._static_occ.T,  # always show static layer behind everything
         origin="lower",
         extent=(0, nx * res, 0, ny * res),
