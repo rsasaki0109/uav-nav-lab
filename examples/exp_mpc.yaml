@@ -1,0 +1,49 @@
+# Sampling MPC + A* cost-to-go heuristic.
+# The planner samples constant-velocity rollouts (n_samples directions, full
+# 360° fan) and scores each by Dijkstra cost-to-go from the rollout points,
+# obstacle-traversal penalty, and smoothness. Reaching the goal mid-rollout
+# is rewarded heavily so it does not over-shoot near the goal.
+name: basic_mpc
+seed: 42
+num_episodes: 5
+
+scenario:
+  type: grid_world
+  size: [50, 50]
+  start: [2.0, 2.0]
+  goal: [45.0, 45.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 40
+    seed: 7
+
+simulator:
+  type: dummy_2d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: mpc
+  max_speed: 8.0
+  replan_period: 0.5
+  horizon: 60          # 3.0s preview at dt_plan=0.05
+  dt_plan: 0.05
+  n_samples: 32
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: delayed
+  delay: 0.05
+  position_noise_std: 0.2
+
+output:
+  dir: results/basic_mpc

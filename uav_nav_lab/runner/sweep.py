@@ -15,6 +15,7 @@ from __future__ import annotations
 import copy
 import itertools
 import json
+import multiprocessing as mp
 from pathlib import Path
 from typing import Any
 
@@ -84,23 +85,45 @@ def expand_sweep(
     return out
 
 
+def _run_one(args: tuple[dict, str]) -> dict:
+    """Worker entry for multiprocessing. Top-level so it pickles cleanly."""
+    cfg_dict, run_dir = args
+    cfg = ExperimentConfig.from_dict(cfg_dict)
+    run_experiment(cfg, Path(run_dir))
+    return {"name": cfg.name, "dir": run_dir}
+
+
 def run_sweep(
     base_cfg: ExperimentConfig,
     overrides: list[tuple[str, str]],
     output_root: Path,
+    parallel: int = 1,
 ) -> Path:
     output_root = Path(output_root)
     output_root.mkdir(parents=True, exist_ok=True)
     cfgs = expand_sweep(base_cfg, overrides)
+    print(f"[sweep] expanded to {len(cfgs)} runs (parallel={parallel})")
+    work: list[tuple[dict, str]] = []
     manifest = []
-    print(f"[sweep] expanded to {len(cfgs)} runs")
     for i, cfg in enumerate(cfgs):
         run_dir = output_root / f"run_{i:03d}"
         run_dir.mkdir(parents=True, exist_ok=True)
         with (run_dir / "config.yaml").open("w", encoding="utf-8") as f:
             yaml.safe_dump(cfg.to_dict(), f, sort_keys=False)
-        run_experiment(cfg, run_dir)
+        work.append((cfg.to_dict(), str(run_dir)))
         manifest.append({"index": i, "name": cfg.name, "dir": str(run_dir)})
+
+    if parallel <= 1:
+        for w in work:
+            _run_one(w)
+    else:
+        # `spawn` keeps things deterministic across platforms and avoids
+        # inheriting numpy / matplotlib / module-level state from the parent.
+        ctx = mp.get_context("spawn")
+        with ctx.Pool(processes=parallel) as pool:
+            for _ in pool.imap_unordered(_run_one, work):
+                pass
+
     with (output_root / "sweep_manifest.json").open("w", encoding="utf-8") as f:
         json.dump({"runs": manifest, "overrides": overrides}, f, indent=2)
     return output_root

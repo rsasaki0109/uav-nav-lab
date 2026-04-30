@@ -5,6 +5,7 @@ Subcommands:
   eval    <run_dir>                       compute metrics from existing logs
   compare <run_dir> <run_dir> [...]       tabulate multiple runs
   sweep   <exp.yaml> --param k=spec ...   Cartesian-product sweep
+  viz     <run_dir>                       render trajectory PNGs
   list                                    show registered backends
 """
 
@@ -67,7 +68,7 @@ def cmd_sweep(args: argparse.Namespace) -> int:
     base = ExperimentConfig.from_yaml(args.config)
     overrides = [_parse_param_arg(p) for p in args.param]
     out_root = Path(args.output_dir) if args.output_dir else Path("results") / f"{base.name}_sweep"
-    run_sweep(base, overrides, out_root)
+    run_sweep(base, overrides, out_root, parallel=int(args.parallel))
     # auto-eval each run and print a comparison table
     run_dirs = sorted(p for p in out_root.iterdir() if p.is_dir() and p.name.startswith("run_"))
     if run_dirs:
@@ -75,6 +76,16 @@ def cmd_sweep(args: argparse.Namespace) -> int:
         print()
         print(format_comparison_text(summaries))
     print(f"\n[sweep] done. results at: {out_root}")
+    return 0
+
+
+def cmd_viz(args: argparse.Namespace) -> int:
+    from .viz import viz_run
+
+    saved = viz_run(Path(args.run_dir), show=bool(args.show))
+    for p in saved:
+        print(f"  wrote {p}")
+    print(f"[viz] {len(saved)} image(s) saved")
     return 0
 
 
@@ -113,7 +124,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="dotted-key override, e.g. planner.max_speed=5:30:5 (repeatable)",
     )
     ps.add_argument("--output-dir", "-o", help="override sweep root directory")
+    ps.add_argument("--parallel", "-j", type=int, default=1, help="parallel worker count")
     ps.set_defaults(func=cmd_sweep)
+
+    pv = sub.add_parser("viz", help="render trajectory PNGs for a run dir")
+    pv.add_argument("run_dir")
+    pv.add_argument("--show", action="store_true", help="also open an interactive window")
+    pv.set_defaults(func=cmd_viz)
 
     pl = sub.add_parser("list", help="list registered backends")
     pl.set_defaults(func=cmd_list)

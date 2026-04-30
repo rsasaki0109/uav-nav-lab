@@ -29,6 +29,7 @@ def _basic_cfg(overrides: dict | None = None) -> ExperimentConfig:
 def test_registries_populated() -> None:
     assert "astar" in PLANNER_REGISTRY.names()
     assert "straight" in PLANNER_REGISTRY.names()
+    assert "mpc" in PLANNER_REGISTRY.names()
 
 
 def test_run_then_eval(tmp_path: Path) -> None:
@@ -65,6 +66,46 @@ def test_cli_list_runs() -> None:
     parser = build_parser()
     args = parser.parse_args(["list"])
     assert args.func(args) == 0
+
+
+def test_mpc_runs(tmp_path: Path) -> None:
+    cfg = _basic_cfg()
+    cfg.planner = {"type": "mpc", "max_speed": 5.0, "replan_period": 0.5, "horizon": 30}
+    cfg.num_episodes = 1
+    cfg.simulator["max_steps"] = 600
+    run_dir = run_experiment(cfg, tmp_path / "mpc")
+    summary = evaluate_run(run_dir)
+    assert summary["n_episodes"] == 1
+
+
+def test_parallel_sweep(tmp_path: Path) -> None:
+    from uav_nav_lab.runner import run_sweep
+
+    base = ExperimentConfig.from_yaml(EXAMPLES / "exp_sweep.yaml")
+    base.num_episodes = 1
+    base.simulator["max_steps"] = 200
+    out = run_sweep(
+        base,
+        [("planner.max_speed", "5,10")],
+        tmp_path / "psweep",
+        parallel=2,
+    )
+    assert (out / "run_000" / "config.yaml").exists()
+    assert (out / "run_001" / "config.yaml").exists()
+    assert (out / "sweep_manifest.json").exists()
+
+
+def test_viz(tmp_path: Path) -> None:
+    pytest.importorskip("matplotlib")
+    from uav_nav_lab.viz import viz_run
+
+    cfg = _basic_cfg()
+    cfg.num_episodes = 1
+    cfg.simulator["max_steps"] = 200
+    run_dir = run_experiment(cfg, tmp_path / "viz_run")
+    saved = viz_run(run_dir)
+    assert len(saved) == 1
+    assert saved[0].exists() and saved[0].stat().st_size > 0
 
 
 def test_cli_run_eval_compare(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -18,13 +18,21 @@ from ..sim import SIM_REGISTRY
 
 
 def _follow_plan(plan: Plan, observation: np.ndarray, max_speed: float) -> np.ndarray:
-    """Pure-pursuit-style waypoint follower.
+    """Convert a Plan into a velocity setpoint.
 
-    1. Project the observation onto the plan by picking the closest waypoint.
-    2. From there, walk forward to the first waypoint at least `lookahead` away.
+    If the planner already chose a velocity (e.g. MPC), apply it directly.
+    Otherwise run pure-pursuit on the waypoint sequence:
+      1. project observation onto the plan via the closest waypoint
+      2. walk forward to the first waypoint at least `lookahead` away
     Lookahead scales with speed so high-speed runs do not chase points that
     have already been overtaken due to sensor lag / noise.
     """
+    if plan.target_velocity is not None:
+        v = np.asarray(plan.target_velocity, dtype=float).reshape(2)
+        n = float(np.linalg.norm(v))
+        if n > max_speed:
+            v = v * (max_speed / n)
+        return v
     if plan.is_empty:
         return np.zeros(2)
     obs = np.asarray(observation, dtype=float)[:2]

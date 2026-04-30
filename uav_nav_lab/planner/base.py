@@ -21,7 +21,8 @@ from ..registry import Registry
 
 @dataclass
 class Plan:
-    waypoints: np.ndarray  # shape (N, D)
+    waypoints: np.ndarray  # shape (N, D) — used by pure-pursuit follower
+    target_velocity: np.ndarray | None = None  # bypass follower if set
     meta: dict = field(default_factory=dict)
 
     @property
