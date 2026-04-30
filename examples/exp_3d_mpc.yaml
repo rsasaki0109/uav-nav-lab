@@ -1,0 +1,45 @@
+# 3D MPC: full Fibonacci-sphere sampling with A* cost-to-go heuristic.
+name: basic_3d_mpc
+seed: 42
+num_episodes: 3
+
+scenario:
+  type: voxel_world
+  size: [30, 30, 10]
+  start: [2.0, 2.0, 5.0]
+  goal: [27.0, 27.0, 5.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 80
+    seed: 11
+
+simulator:
+  type: dummy_3d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: mpc
+  max_speed: 8.0
+  replan_period: 0.5
+  horizon: 60
+  dt_plan: 0.05
+  n_samples: 64        # denser sampling needed in 3D vs 2D
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: delayed
+  delay: 0.05
+  position_noise_std: 0.2
+
+output:
+  dir: results/basic_3d_mpc

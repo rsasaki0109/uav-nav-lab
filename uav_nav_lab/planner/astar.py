@@ -1,31 +1,20 @@
 """N-D A* planner over an occupancy grid.
 
 Detects dimension from the occupancy map's ndim:
-  - 2D → 8-connected, octile heuristic
-  - 3D → 26-connected, Euclidean heuristic
+  - 2D → 8-connected
+  - 3D → 26-connected
 The output waypoints are in world meters (cell-center positions).
 """
 
 from __future__ import annotations
 
 import heapq
-import itertools
 from typing import Any, Mapping
 
 import numpy as np
 
+from ._grid import build_neighbours, inflate_obstacles
 from .base import PLANNER_REGISTRY, Plan, Planner
-
-
-def _build_neighbours(ndim: int) -> list[tuple[tuple[int, ...], float]]:
-    """All ±1/0 offsets with weight = Euclidean length, excluding the origin."""
-    out = []
-    for delta in itertools.product((-1, 0, 1), repeat=ndim):
-        if all(d == 0 for d in delta):
-            continue
-        w = float(np.sqrt(sum(d * d for d in delta)))
-        out.append((delta, w))
-    return out
 
 
 def _heuristic(a: tuple[int, ...], b: tuple[int, ...]) -> float:
@@ -38,7 +27,7 @@ def _astar(
     if occ[start] or occ[goal]:
         return None
     ndim = occ.ndim
-    neighbours = _build_neighbours(ndim)
+    neighbours = build_neighbours(ndim)
     open_heap: list[tuple[float, int, tuple[int, ...]]] = []
     heapq.heappush(open_heap, (0.0, 0, start))
     came_from: dict[tuple[int, ...], tuple[int, ...]] = {}
@@ -60,8 +49,6 @@ def _astar(
                 continue
             if occ[nb]:
                 continue
-            # disallow corner-cutting: if any axis-aligned neighbour along
-            # the diagonal is blocked, skip
             nz = sum(1 for d in delta if d != 0)
             if nz > 1:
                 blocked = False
@@ -108,34 +95,14 @@ class AStarPlanner(Planner):
     def _world_to_cell(self, p: np.ndarray, shape: tuple[int, ...]) -> tuple[int, ...]:
         return tuple(int(np.clip(p[i] / self.resolution, 0, shape[i] - 1)) for i in range(len(shape)))
 
-    def _inflated(self, occ: np.ndarray) -> np.ndarray:
-        if self.inflate <= 0:
-            return occ
-        out = occ.copy()
-        for _ in range(self.inflate):
-            shifted = np.zeros_like(out)
-            for axis in range(out.ndim):
-                # forward shift
-                slc_dst = [slice(None)] * out.ndim
-                slc_src = [slice(None)] * out.ndim
-                slc_dst[axis] = slice(1, None)
-                slc_src[axis] = slice(None, -1)
-                shifted[tuple(slc_dst)] |= out[tuple(slc_src)]
-                # backward shift
-                slc_dst[axis] = slice(None, -1)
-                slc_src[axis] = slice(1, None)
-                shifted[tuple(slc_dst)] |= out[tuple(slc_src)]
-            out |= shifted
-        return out
-
     def plan(self, observation: np.ndarray, goal: np.ndarray, obstacle_map: Any) -> Plan:
-        occ = np.asarray(obstacle_map, dtype=bool)
-        ndim = occ.ndim
-        occ = self._inflated(occ)
+        occ_raw = np.asarray(obstacle_map, dtype=bool)
+        ndim = occ_raw.ndim
+        occ = inflate_obstacles(occ_raw, self.inflate)
         start_cell = self._world_to_cell(np.asarray(observation, dtype=float)[:ndim], occ.shape)
         goal_cell = self._world_to_cell(np.asarray(goal, dtype=float)[:ndim], occ.shape)
         if occ[start_cell] or occ[goal_cell]:
-            occ = np.asarray(obstacle_map, dtype=bool)
+            occ = occ_raw
         path_cells = _astar(occ, start_cell, goal_cell)
         if path_cells is None:
             return Plan(

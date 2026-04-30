@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import numpy as np
+import numpy as np  # noqa: F401
 import pytest
 
 from uav_nav_lab.cli import build_parser, main
@@ -80,6 +80,29 @@ def test_3d_runs(tmp_path: Path) -> None:
 
     ep0 = json.loads((run_dir / "episode_000.json").read_text())
     assert len(ep0["steps"][0]["true_pos"]) == 3
+
+
+def test_3d_mpc_runs(tmp_path: Path) -> None:
+    cfg = ExperimentConfig.from_yaml(EXAMPLES / "exp_3d_mpc.yaml")
+    cfg.num_episodes = 1
+    cfg.simulator["max_steps"] = 400
+    cfg.scenario["obstacles"]["count"] = 30  # keep it loose; MPC only needs to plan, not succeed
+    cfg.planner["n_samples"] = 16
+    run_dir = run_experiment(cfg, tmp_path / "3d_mpc")
+    summary = evaluate_run(run_dir)
+    assert summary["n_episodes"] == 1
+
+
+def test_sample_unit_directions_3d() -> None:
+    from uav_nav_lab.planner._grid import sample_unit_directions
+
+    base = np.array([1.0, 0.0, 0.0])
+    dirs = sample_unit_directions(3, 16, base)
+    assert dirs.shape == (16, 3)
+    norms = np.linalg.norm(dirs, axis=1)
+    assert np.allclose(norms, 1.0, atol=1e-6)
+    # first sample is the goal direction
+    assert np.allclose(dirs[0], base)
 
 
 def test_mpc_runs(tmp_path: Path) -> None:
