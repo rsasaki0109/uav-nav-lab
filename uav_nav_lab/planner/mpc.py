@@ -23,6 +23,7 @@ from typing import Any, Mapping
 
 import numpy as np
 
+from ..predictor import Predictor, build_predictor
 from ._grid import dijkstra_cost_to_go, inflate_obstacles, sample_unit_directions
 from .base import PLANNER_REGISTRY, Plan, Planner
 
@@ -44,6 +45,7 @@ class SamplingMPCPlanner(Planner):
         w_goal: float = 1.0,
         w_obs: float = 100.0,
         w_smooth: float = 0.05,
+        predictor: Predictor | None = None,
     ) -> None:
         self.max_speed = float(max_speed)
         self.horizon = int(horizon)
@@ -58,6 +60,7 @@ class SamplingMPCPlanner(Planner):
         self.w_goal = float(w_goal)
         self.w_obs = float(w_obs)
         self.w_smooth = float(w_smooth)
+        self._predictor: Predictor = predictor if predictor is not None else build_predictor(None)
         self._prev_action: np.ndarray | None = None
 
     @classmethod
@@ -76,10 +79,12 @@ class SamplingMPCPlanner(Planner):
             w_goal=float(cfg.get("w_goal", 1.0)),
             w_obs=float(cfg.get("w_obs", 100.0)),
             w_smooth=float(cfg.get("w_smooth", 0.05)),
+            predictor=build_predictor(cfg.get("predictor")),
         )
 
     def reset(self) -> None:
         self._prev_action = None
+        self._predictor.reset()
 
     def _cell(self, p: np.ndarray, shape: tuple[int, ...]) -> tuple[int, ...]:
         return tuple(
@@ -106,15 +111,21 @@ class SamplingMPCPlanner(Planner):
     ) -> Plan:
         occ_raw = np.asarray(obstacle_map, dtype=bool)
         ndim = occ_raw.ndim
-        # constant-velocity prediction set: precompute (pos, vel, r2) per
-        # known dynamic obstacle so each rollout step is a cheap distance test.
-        predict: list[tuple[np.ndarray, np.ndarray, float]] = []
+        # Pre-compute predicted dynamic-obstacle trajectories once per replan
+        # (rather than per-sample × per-step) via the configured predictor.
+        # Shape: [n_obs, horizon, ndim]; r2_arr: [n_obs] of squared radii.
         if self.use_prediction and dynamic_obstacles:
-            for d in dynamic_obstacles:
-                p = np.asarray(d["position"], dtype=float)[:ndim]
-                v = np.asarray(d["velocity"], dtype=float)[:ndim]
-                r = float(d.get("radius", 0.5)) + self.safety_margin
-                predict.append((p, v, r * r))
+            horizon_dts = np.arange(1, self.horizon + 1, dtype=float) * self.dt_plan
+            pred_traj = self._predictor.predict(
+                dynamic_obstacles, horizon_dts
+            )[:, :, :ndim]
+            r2_arr = np.array(
+                [(float(d.get("radius", 0.5)) + self.safety_margin) ** 2 for d in dynamic_obstacles],
+                dtype=float,
+            )
+        else:
+            pred_traj = None
+            r2_arr = None
         occ = inflate_obstacles(occ_raw, self.inflate)
         obs = np.asarray(observation, dtype=float)[:ndim]
         gl = np.asarray(goal, dtype=float)[:ndim]
@@ -166,14 +177,12 @@ class SamplingMPCPlanner(Planner):
                     break
                 if self._occupied(occ, rollout[h]):
                     collision_pen += 1
-                # predicted dynamic obstacles (constant velocity)
-                if predict:
-                    th = h * self.dt_plan
-                    for p0, vv, rr2 in predict:
-                        p_h = p0 + vv * th
-                        if float(np.sum((rollout[h] - p_h) ** 2)) <= rr2:
-                            collision_pen += 1
-                            break
+                # predicted dynamic obstacles (precomputed by self._predictor)
+                if pred_traj is not None:
+                    diffs = pred_traj[:, h - 1, :] - rollout[h]
+                    sep2 = np.sum(diffs * diffs, axis=1)
+                    if np.any(sep2 <= r2_arr):
+                        collision_pen += 1
                 cell_h = self._cell(rollout[h], occ.shape)
                 ctg_h = float(ctg[cell_h]) if np.isfinite(ctg[cell_h]) else unreachable_penalty
                 ctg_sum_until += ctg_h

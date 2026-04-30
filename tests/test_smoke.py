@@ -406,3 +406,65 @@ def test_cli_run_eval_compare(tmp_path: Path, capsys: pytest.CaptureFixture[str]
     # confirm log files exist
     assert any(out_a.glob("episode_*.json"))
     assert (out_a / "summary.json").exists()
+
+
+def test_predictor_registry_has_defaults() -> None:
+    from uav_nav_lab.predictor import PREDICTOR_REGISTRY
+
+    names = PREDICTOR_REGISTRY.names()
+    assert "constant_velocity" in names
+    assert "noisy_velocity" in names
+
+
+def test_constant_velocity_predictor_extrapolates_linearly() -> None:
+    import numpy as np
+
+    from uav_nav_lab.predictor import build_predictor
+
+    p = build_predictor({"type": "constant_velocity"})
+    obs = [{"position": [0.0, 0.0], "velocity": [1.0, 2.0], "radius": 0.5}]
+    traj = p.predict(obs, np.array([1.0, 2.0, 3.0]))
+    # one obstacle, three time points, 2D
+    assert traj.shape == (1, 3, 2)
+    assert np.allclose(traj[0, 0], [1.0, 2.0])
+    assert np.allclose(traj[0, 2], [3.0, 6.0])
+
+
+def test_noisy_predictor_seed_is_deterministic() -> None:
+    import numpy as np
+
+    from uav_nav_lab.predictor import build_predictor
+
+    cfg = {"type": "noisy_velocity", "velocity_noise_std": 1.0}
+    obs = [{"position": [0.0, 0.0], "velocity": [1.0, 0.0], "radius": 0.5}]
+    dts = np.array([1.0, 2.0])
+    p1 = build_predictor(cfg)
+    p1.reset(seed=123)
+    a = p1.predict(obs, dts)
+    p2 = build_predictor(cfg)
+    p2.reset(seed=123)
+    b = p2.predict(obs, dts)
+    assert np.allclose(a, b)
+    # but a fresh seed should produce a different draw
+    p3 = build_predictor(cfg)
+    p3.reset(seed=456)
+    c = p3.predict(obs, dts)
+    assert not np.allclose(a, c)
+
+
+def test_mpc_uses_configured_predictor(tmp_path: Path) -> None:
+    """MPC must accept a `planner.predictor` block and pass it through."""
+    from uav_nav_lab.predictor import constant_velocity as cv
+    from uav_nav_lab.predictor import noisy as ny
+
+    cfg = ExperimentConfig.from_yaml(EXAMPLES / "exp_predictor_noise.yaml")
+    cfg.num_episodes = 1
+    cfg.simulator["max_steps"] = 200
+    cfg.planner["predictor"] = {"type": "noisy_velocity", "velocity_noise_std": 0.5}
+    planner_cls = PLANNER_REGISTRY.get(cfg.planner["type"])
+    p = planner_cls.from_config(cfg.planner)
+    assert isinstance(p._predictor, ny.NoisyVelocityPredictor)
+
+    cfg.planner["predictor"] = {"type": "constant_velocity"}
+    p = planner_cls.from_config(cfg.planner)
+    assert isinstance(p._predictor, cv.ConstantVelocityPredictor)

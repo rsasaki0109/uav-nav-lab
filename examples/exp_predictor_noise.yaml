@@ -1,0 +1,64 @@
+# Predictor-quality ablation.
+# Sweep: --param planner.predictor.velocity_noise_std=0.0,0.5,1.0,2.0,4.0
+# As the planner's belief about obstacle velocities gets noisier, predicted
+# trajectories diverge from reality and the success rate should drop.
+name: predictor_noise
+seed: 42
+num_episodes: 20
+
+scenario:
+  type: grid_world
+  size: [50, 50]
+  start: [2.0, 2.0]
+  goal: [45.0, 45.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 25
+    seed: 7
+  dynamic_obstacles:
+    - start: [25.0, 10.0]
+      velocity: [0.0, 6.0]
+      reflect: true
+      radius: 0.8
+    - start: [10.0, 30.0]
+      velocity: [5.0, 0.0]
+      reflect: true
+      radius: 0.8
+    - start: [35.0, 25.0]
+      velocity: [-4.0, 3.0]
+      reflect: true
+      radius: 0.8
+
+simulator:
+  type: dummy_2d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: mpc
+  max_speed: 8.0
+  replan_period: 0.2
+  horizon: 60
+  dt_plan: 0.05
+  n_samples: 32
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  safety_margin: 0.5
+  use_prediction: true
+  predictor:
+    type: noisy_velocity
+    velocity_noise_std: 0.0
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/predictor_noise
