@@ -145,7 +145,15 @@ paid for at ~11× the per-replan cost of A*.
 
 ### MPC compute Pareto
 
-`examples/exp_predictive.yaml` — n_samples × horizon, n=20:
+`examples/exp_predictive.yaml` — n_samples × horizon. The 6-panel
+output of `uav-nav viz <sweep_dir>` lets you read off the success
+ceiling and the compute it costs in one figure:
+
+<p align="center">
+<img src="docs/images/sweep_pareto.png" alt="6-panel Pareto sweep: success / collision / avg speed / ATE / planner_dt mean / planner_dt p95" width="640">
+</p>
+
+At n=20 episodes per cell:
 
 | n_samples \ horizon | 20 | 40 | 60 | 80 | 120 |
 |---|---|---|---|---|---|
