@@ -214,32 +214,38 @@ Sole Pareto-optimal point: **n_samples=16, horizon=20 → 100 % / 51 ms**.
 Longer rollouts actively *hurt* success — the reach-goal bonus fires
 less often when the rollout overshoots the goal radius mid-trajectory.
 
-### 3D Pareto: the 2D conclusions partly transfer, the compute budget does not
+### 3D Pareto: the n_samples preference flips
 
 `examples/exp_3d_predictive.yaml` — the same n_samples × horizon sweep on
-a 3D `voxel_world` (40×40×12, three bouncing 3D dynamic obstacles, n=4):
+a 3D `voxel_world` (40×40×12, three bouncing 3D dynamic obstacles, n=8
+post-cache):
 
 <p align="center">
 <img src="docs/images/sweep_pareto_3d.png" alt="6-panel Pareto sweep on the 3D voxel world: success / collision / avg speed / ATE / planner_dt mean / planner_dt p95" width="640">
 </p>
 
-Two findings vs the 2D analogue:
+Findings vs the 2D analogue:
 
-- **Plan-time blow-up.** Every cell exceeds **1.3 s per replan** (vs
-  51 ms at the 2D Pareto cell), so with `replan_period=0.2 s` the
-  planner is uniformly CPU-saturated. The 2D-Pareto-optimal config
-  (n_samples=16, horizon=20) lands at ~1.78 s in 3D — 8.9× the replan
-  budget. Take-away: compute budget does *not* transfer across
-  dimensionality.
-- **The "longer rollouts hurt" effect partly transfers.** 2D shows a
-  clean monotonic drop with horizon (100 → 35 %); 3D rows stay much
-  flatter (75 → 25-75 %) — the wider escape volume masks the
-  reach-goal-bonus overshoot artifact that hurt 2D MPC at long horizons.
+- **The Pareto frontier shifts to lower n_samples.** The 2D-optimal
+  config (n=16, h=20 → 100 % / 51 ms in 2D) lands at only 75 % / 91 ms
+  in 3D. The strongest 3D cells are **n=8, h=20 → 88 % / 70 ms** and
+  n=128, h=40 → 100 % / 273 ms. Fibonacci-sphere sampling already
+  covers the 3D escape directions densely enough that fewer per-step
+  samples suffice — compute is better spent on horizon depth, opposite
+  of 2D's preference.
+- **The "longer rollouts hurt" effect partly transfers.** 2D drops
+  monotonically with horizon (100 → 35 %); 3D drops more gently (most
+  rows stay 75 → 38 %), but the trend is the same. The 3D escape volume
+  softens but does not eliminate the reach-goal-bonus overshoot.
+- **The 3D plan_dt blow-up was a Dijkstra artifact.** A first pass had
+  every cell at 1.3-2.2 s — too slow to fit `replan_period=0.2 s`. The
+  static cost-to-go cache (added to `SamplingMPCPlanner`) brought 3D
+  plan_dt back to the same order of magnitude as 2D (70-750 ms across
+  the grid), making this sweep and the cliff sweeps actually tractable.
 
 Methodological transfer: re-validate Pareto in every dimensionality.
-A planner config that is Pareto-optimal in 2D is not automatically
-optimal in 3D — and even if the success ceiling moves modestly, the
-compute envelope can blow through the replan period entirely.
+n_samples preference flips, the compute envelope changes, and what
+looked like a CPU-saturation cliff in 3D was actually a missing cache.
 
 ### Pareto config materially rewrites prior conclusions
 

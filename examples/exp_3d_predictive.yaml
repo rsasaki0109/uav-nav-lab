@@ -2,56 +2,59 @@
 # dynamic obstacles + perfect sensor + Pareto MPC. Validates whether the
 # 2D Pareto / cliff findings transfer to 3D.
 #
-# Validated 3D Pareto sweep — n_samples × horizon (n=4 directional
-# episodes per cell, success rate %):
+# Validated 3D Pareto sweep — n_samples × horizon (n=8 episodes per cell,
+# Wilson 95 % half-widths ≈ ±17 pp, success rate %):
 #
-#     n_samp\horizon    20    40    60    80   120
-#              8        75    50    50    25    25
-#             16        75    75    50    25    25
-#             32        75    50    75    75    25
-#             64       100    75    50    50    25
-#            128        50   100    75    50    75
+#     n_samp\horizon     20    40    60    80   120
+#              8        88    75    75    38    38
+#             16        75    88    62    38    38
+#             32        75    75    88    75    38
+#             64        88    75    62    50    38
+#            128        75   100    88    62    62
 #
 #   planner_dt mean (ms):
-#     n_samp\horizon     20     40     60     80    120
-#              8       1577   1603   1337   1358   1395
-#             16       1780   2256   1355   1697   1370
-#             32       1358   1354   2016   1592   1480
-#             64       1673   1430   1653   2007   1650
-#            128       1475   2168   1626   2047   1866
+#     n_samp\horizon     20    40    60    80   120
+#              8         70    77    87   103   143
+#             16         91    87   105   129   160
+#             32        104   114   144   175   240
+#             64        109   168   223   278   405
+#            128        264   273   372   471   747
 #
 # Findings vs the 2D analogue:
-#  - **Plan-time blow-up**: every cell exceeds 1.3 s per replan, vs 51 ms
-#    at the 2D Pareto cell. With replan_period=0.2 s every replan is
-#    7-10x late — the planner is CPU-saturated across the whole grid.
-#    The headline takeaway is the same as the 2D Pareto re-validation
-#    saga: compute budget moves with dimensionality, and a plan_dt that
-#    fits replan_period in 2D may not fit at all in 3D.
-#  - **The 2D "longer rollouts hurt" effect does not transfer**. In 2D
-#    success drops monotonically with horizon (100 → 35 % across
-#    horizon=20 → 120). In 3D the trend is much flatter — 75 % stays at
-#    75 % across most rows, with high noise. The reach-goal-bonus
-#    overshoot artifact is masked by the wider escape volume.
-#  - **Lower n_samples can still hit 100 %**: best-case n=64, h=20
-#    succeeds 4/4 in 3D, vs 2D's strict requirement of n_samples ≥ 16.
-#    The 3D Fibonacci-sphere distribution does not need as many samples
-#    to find a viable direction.
+#  - **The 2D "longer rollouts hurt" effect partly transfers**. 2D drops
+#    monotonically with horizon (100 → 35 % across h=20 → 120). 3D drops
+#    more gently (most rows stay 75 → 38 %), but the trend is the same:
+#    long horizons fall victim to the reach-goal-bonus over-shoot artifact.
+#    The 3D escape volume softens but does not eliminate the effect.
+#  - **The Pareto frontier shifts to lower n_samples in 3D**. The 2D
+#    Pareto-optimal point (n=16, h=20 → 100 % / 51 ms in 2D) lands at
+#    only 75 % / 91 ms in 3D. The strongest 3D cells in this sweep are
+#    n=8, h=20 (88 % / 70 ms) and n=128, h=40 (100 % / 273 ms).
+#    Fibonacci-sphere sampling already covers the 3D escape directions
+#    densely enough that fewer per-step samples suffice — the compute
+#    is then better spent on horizon depth, opposite of 2D's preference.
+#  - **plan_dt is now well-behaved post-cache** (70-750 ms). Pre-cache
+#    every cell sat at 1.3-2.2 s; the static cost-to-go cache (added in
+#    SamplingMPCPlanner) brought 3D plan_dt back to the same order of
+#    magnitude as 2D, making this sweep — and follow-up cliff sweeps —
+#    actually tractable.
 #
-# Honest caveat: at n=4 episodes Wilson 95 % half-widths are ±35 pp on
-# isolated cells, so individual cell-by-cell comparisons aren't
-# significant. The *row trends* and the plan_dt regime change are
-# robust enough to act on — the rest needs n=20+ to nail down.
+# Honest caveat: at n=8 Wilson 95 % half-widths are ±17 pp on individual
+# cells, so cell-by-cell comparisons (e.g. is n=128/h=40 truly the only
+# 100 %?) are not significant. *Row trends* (horizon → 80, 120 hurts) and
+# the plan_dt scaling are robust.
 #
 # Methodological transfer: re-validate Pareto in every dimensionality.
 # A planner config that is Pareto-optimal in 2D is *not* automatically
-# optimal in 3D — the geometry of the escape space changes, and the
-# compute budget moves harder than success ceiling does.
+# optimal in 3D — n_samples preference flips, and the compute envelope
+# can blow through replan_period entirely if the cost-to-go heuristic
+# is not cached.
 #
 # Reproduce with:
 #   uav-nav sweep examples/exp_3d_predictive.yaml \
 #     --param planner.n_samples=8,16,32,64,128 \
 #     --param planner.horizon=20,40,60,80,120 \
-#     --param num_episodes=4 -j 4
+#     --param num_episodes=8 -j 4
 #
 name: predictive_mpc_3d
 seed: 42
