@@ -1,0 +1,62 @@
+# 4-drone cross crossing: pairs heading west↔east and north↔south, all
+# meeting near the center. Tougher coordination than the 2- and 3-drone
+# cases since each drone has two perpendicular peers near its midpoint.
+name: multi_drone_4
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: multi_drone_grid
+  size: [60, 60]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 30
+    seed: 7
+  drones:
+    - name: east
+      start: [3.0, 30.0]
+      goal:  [55.0, 30.0]
+      radius: 0.4
+    - name: west
+      start: [55.0, 30.0]
+      goal:  [3.0, 30.0]
+      radius: 0.4
+    - name: north
+      start: [30.0, 3.0]
+      goal:  [30.0, 55.0]
+      radius: 0.4
+    - name: south
+      start: [30.0, 55.0]
+      goal:  [30.0, 3.0]
+      radius: 0.4
+
+simulator:
+  type: dummy_2d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: mpc
+  max_speed: 7.0
+  replan_period: 0.2
+  horizon: 60
+  dt_plan: 0.05
+  n_samples: 32
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  safety_margin: 0.6
+  use_prediction: true
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/multi_drone_4

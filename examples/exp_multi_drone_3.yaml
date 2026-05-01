@@ -1,0 +1,59 @@
+# 3-drone star crossing: each drone heads through the world center toward
+# the position roughly opposite their start. Same world / planner / sensor
+# stack as exp_multi_drone.yaml so the N=2 vs N=3 comparison only changes
+# the number of drones in the scene.
+name: multi_drone_3
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: multi_drone_grid
+  size: [60, 60]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 30
+    seed: 7
+  drones:
+    - name: alice
+      start: [3.0, 30.0]
+      goal:  [55.0, 30.0]
+      radius: 0.4
+    - name: bob
+      start: [40.0, 5.0]
+      goal:  [20.0, 55.0]
+      radius: 0.4
+    - name: charlie
+      start: [40.0, 55.0]
+      goal:  [20.0, 5.0]
+      radius: 0.4
+
+simulator:
+  type: dummy_2d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: mpc
+  max_speed: 7.0
+  replan_period: 0.2
+  horizon: 60
+  dt_plan: 0.05
+  n_samples: 32
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  safety_margin: 0.6
+  use_prediction: true
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/multi_drone_3
