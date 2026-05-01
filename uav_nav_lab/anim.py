@@ -6,10 +6,9 @@ state, and the drone trajectory build up frame by frame so the animation
 matches what the planner actually saw at each replan.
 
 The animation re-reads the saved config so the scenario seed and dynamic
-obstacle setup match the original run exactly.
-
-Currently 2D-only — Axes3D animations are large and slow to encode; not
-worth the complexity until someone needs them.
+obstacle setup match the original run exactly. Both 2D (matplotlib
+axes) and 3D (Axes3D with rotating camera) renderings are supported;
+the dispatcher picks based on `scenario.ndim`.
 """
 
 from __future__ import annotations
@@ -135,6 +134,109 @@ def _animate_episode_2d(plt, animation, cfg: ExperimentConfig, ep: dict, scenari
     return fig, anim
 
 
+def _animate_episode_3d(plt, animation, cfg: ExperimentConfig, ep: dict, scenario, fps: int) -> Any:
+    import numpy as np
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  registers projection
+
+    res = scenario.resolution
+    nx, ny, nz = scenario.occupancy.shape
+    steps = ep["steps"]
+    if not steps:
+        return None
+
+    dt = float(cfg.simulator.get("dt", 0.05))
+    sim_fps = 1.0 / dt
+    stride = max(1, int(round(sim_fps / fps)))
+    frame_indices = list(range(0, len(steps), stride))
+    if frame_indices[-1] != len(steps) - 1:
+        frame_indices.append(len(steps) - 1)
+
+    fig = plt.figure(figsize=(7, 6))
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_xlim(0, nx * res)
+    ax.set_ylim(0, ny * res)
+    ax.set_zlim(0, nz * res)
+
+    # Static obstacles: scatter once (cheap vs re-drawing each frame).
+    static_occ = getattr(scenario, "_static_occ", scenario.occupancy)
+    ix, iy, iz = np.where(static_occ)
+    if ix.size > 0:
+        ax.scatter(
+            (ix + 0.5) * res,
+            (iy + 0.5) * res,
+            (iz + 0.5) * res,
+            c="gray", alpha=0.25, s=18, marker="s",
+        )
+    ax.scatter(*scenario.start, c="green", s=80, label="start")
+    ax.scatter(*scenario.goal, c="red", marker="*", s=160, label="goal")
+
+    (traj_line,) = ax.plot([], [], [], "-", color="tab:blue", lw=1.5, label="true")
+    drone_pt = ax.scatter([], [], [], c="tab:blue", s=60, depthshade=True)
+    dyn_scatter = ax.scatter([], [], [], s=120, c="tab:red", marker="o", edgecolors="black")
+    title = ax.set_title("")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+    ax.legend(loc="upper left", fontsize=8)
+
+    # Re-derive dynamic obstacle trajectories from the replay config so we
+    # show their actual positions at each frame (rather than the stale
+    # snapshots saved in step records, which only have what the *sensor*
+    # reported).
+    dyn_specs = list(cfg.scenario.get("dynamic_obstacles", []) or [])
+
+    def dyn_at_step_index(j: int) -> tuple[list[float], list[float], list[float]]:
+        if not dyn_specs:
+            return [], [], []
+        # Re-compute deterministic motion to step j (with reflection).
+        bounds = (nx * res, ny * res, nz * res)
+        xs: list[float] = []
+        ys: list[float] = []
+        zs: list[float] = []
+        for spec in dyn_specs:
+            pos = list(map(float, spec["start"]))
+            vel = list(map(float, spec.get("velocity", [0, 0, 0])))
+            reflect = bool(spec.get("reflect", True))
+            for _ in range(j):
+                for k in range(3):
+                    pos[k] += vel[k] * dt
+                    if reflect:
+                        if pos[k] < 0:
+                            pos[k] = -pos[k]
+                            vel[k] = -vel[k]
+                        elif pos[k] > bounds[k]:
+                            pos[k] = 2 * bounds[k] - pos[k]
+                            vel[k] = -vel[k]
+            xs.append(pos[0])
+            ys.append(pos[1])
+            zs.append(pos[2])
+        return xs, ys, zs
+
+    def update(frame_i: int) -> tuple[Any, ...]:
+        j = frame_indices[frame_i]
+        # Trajectory up to j.
+        tx = [steps[k]["true_pos"][0] for k in range(j + 1)]
+        ty = [steps[k]["true_pos"][1] for k in range(j + 1)]
+        tz = [steps[k]["true_pos"][2] for k in range(j + 1)]
+        traj_line.set_data(tx, ty)
+        traj_line.set_3d_properties(tz)
+        drone_pt._offsets3d = ([tx[-1]], [ty[-1]], [tz[-1]])
+        dx, dy, dz = dyn_at_step_index(j)
+        dyn_scatter._offsets3d = (dx, dy, dz)
+        # Slow rotating view, +120° over the episode for a sense of depth.
+        ax.view_init(elev=22.0, azim=-60.0 + (frame_i / max(1, len(frame_indices) - 1)) * 120.0)
+        title.set_text(
+            f"ep {ep['meta']['episode']:03d}  outcome={ep.get('outcome','?')}  "
+            f"t={steps[j]['t']:.1f}s"
+        )
+        return traj_line, drone_pt, dyn_scatter, title
+
+    anim = animation.FuncAnimation(
+        fig, update, frames=len(frame_indices), interval=1000 / fps, blit=False
+    )
+    return fig, anim
+
+
 def viz_anim(run_dir: Path, fps: int = 20) -> list[Path]:
     plt, animation = _need_mpl_anim()
     run_dir = Path(run_dir)
@@ -145,14 +247,19 @@ def viz_anim(run_dir: Path, fps: int = 20) -> list[Path]:
         cfg = ExperimentConfig.from_dict(yaml.safe_load(f))
     scenario_cls = SCENARIO_REGISTRY.get(cfg.scenario.get("type", "grid_world"))
     scenario = scenario_cls.from_config(cfg.scenario)
-    if scenario.ndim != 2:
-        raise NotImplementedError("anim currently supports 2D scenarios only.")
+    if scenario.ndim not in (2, 3):
+        raise NotImplementedError(f"anim supports 2D / 3D scenarios (got ndim={scenario.ndim}).")
 
     saved: list[Path] = []
     for ef in sorted(run_dir.glob("episode_*.json")):
+        if "_drone_" in ef.stem or ef.stem.endswith("_joint"):
+            continue  # multi-drone artifacts handled by 2D path elsewhere
         with ef.open("r", encoding="utf-8") as f:
             ep = json.load(f)
-        result = _animate_episode_2d(plt, animation, cfg, ep, scenario, fps=fps)
+        if scenario.ndim == 3:
+            result = _animate_episode_3d(plt, animation, cfg, ep, scenario, fps=fps)
+        else:
+            result = _animate_episode_2d(plt, animation, cfg, ep, scenario, fps=fps)
         if result is None:
             continue
         fig, anim = result

@@ -226,6 +226,10 @@ less often when the rollout overshoots the goal radius mid-trajectory.
 
 ### 3D Pareto: the n_samples preference flips
 
+<p align="center">
+<img src="docs/images/demo_3d.gif" alt="3D Predictive-MPC episode on a 40×40×12 voxel world: drone (blue) reaches the goal while three bouncing dynamic obstacles (red) cross its path" width="480">
+</p>
+
 `examples/exp_3d_predictive.yaml` — the same n_samples × horizon sweep on
 a 3D `voxel_world` (40×40×12, three bouncing 3D dynamic obstacles, n=8
 post-cache):
