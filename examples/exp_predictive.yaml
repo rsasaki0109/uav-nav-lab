@@ -81,6 +81,36 @@
 #     --param sensor.delay=0.0,0.05,0.1,0.2,0.5 \
 #     --param planner.max_speed=10,15,20,25,30 \
 #     --param num_episodes=20 -j 4
+#
+# Recovery sweep at the worst-tolerated cell (delay=0.2 s, speed=15
+# m/s, where the previous heatmap reads 15% success): does widening
+# the safety margins absorb the perception lag for moving threats?
+#
+#   success rate (%):
+#     inflate\safety_margin   0.5   1.0   1.5   2.0   3.0
+#                       1      15    15    10    10    20
+#                       2      20    30    30    35    20
+#                       3      50    25    25    20    20
+#                       4      30    35    10    10    45
+#                       5      20    20    35    45    55  ← best
+#
+# Partial recovery only: 15% → 55% (Δ=40pp) at the most aggressive
+# margin tested. The signal is bumpy at n=20 (Wilson half-widths
+# ≈15–20pp, so individual pair comparisons aren't significant), but
+# the row trend (inflate=5 the only consistent improvement) is
+# robust. **No corner recovers to the static-obstacle baseline of
+# ~100%** — perception lag fundamentally limits the dynamic-obstacle
+# case in a way that static A* does not suffer from. Engineering
+# implication: pad more, but expect diminishing returns; tighter
+# perception latency is the lever to keep pulling.
+#
+# Reproduce with:
+#   uav-nav sweep examples/exp_predictive.yaml \
+#     --param sensor.type=delayed --param sensor.delay=0.2 \
+#     --param planner.max_speed=15 \
+#     --param planner.inflate=1,2,3,4,5 \
+#     --param planner.safety_margin=0.5,1.0,1.5,2.0,3.0 \
+#     --param num_episodes=20 -j 4
 name: predictive_mpc
 seed: 42
 num_episodes: 5
