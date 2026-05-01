@@ -92,6 +92,25 @@ Each finding lives in the comment header of the YAML that produces it,
 along with a one-line `uav-nav sweep` invocation that reproduces it.
 Wilson 95% intervals on rates, mean ± 1.96·SEM on continuous metrics.
 
+### Planner head-to-head on dynamic obstacles
+
+`examples/exp_compare_{straight,astar,mpc}.yaml` — same 50×50 world,
+same three bouncing obstacles, same perfect sensor, only the planner
+changes (n=30 each):
+
+| planner | succ % | coll % | plan_ms mean / p95 |
+|---|---|---|---|
+| straight     |   0.0 ± 5.7  | 100.0 ± 5.7 |  0.04 /  0.05 |
+| astar        |  20.0 ± 13.9 |  80.0 ± 13.9 |  4.75 /  8.97 |
+| mpc (Pareto) | **100.0** ± 5.7 |   0.0 ± 5.7 | 52.16 / 56.96 |
+
+A* sees only a snapshot at replan time and walks into where the bouncing
+obstacles will be 0.2 s later — 20 % success. MPC at the Pareto config
+(n_samples=16, horizon=20) routes around future obstacle positions and
+clears every episode. The +80 pp gap is the experimentally-measured
+value of having a motion model in this scenario, paid for at ~11× the
+per-replan cost of A*.
+
 ### MPC compute Pareto
 
 `examples/exp_predictive.yaml` — n_samples × horizon, n=20:
@@ -177,8 +196,8 @@ sounds fanciest — the framework is built to make that picking trivial.
 
 ## Status
 
-* 18 commits, 42 tests, GitHub Actions CI on Python 3.10 / 3.11 / 3.12 + a
-  CLI smoke job.
+* v0.1.0 released, 42 tests, GitHub Actions CI on Python 3.10 / 3.11 / 3.12
+  + a CLI smoke job.
 * 5 sensor backends (`perfect`, `delayed`, `kalman_delayed`, `lidar`),
   3 predictor backends (`constant_velocity`, `noisy_velocity`,
   `kalman_velocity`), 3 planners (`astar`, `straight`, `mpc`),

@@ -1,0 +1,86 @@
+# Planner head-to-head — A* on the predictive (dynamic-obstacle) scenario.
+#
+# Shared with exp_compare_straight.yaml and exp_compare_mpc.yaml: same
+# 50×50 grid, same 25 random static obstacles, same three bouncing
+# dynamic obstacles, same perfect sensor — only `planner.type` and the
+# planner-specific block differ. Compares apples-to-apples whether each
+# planner can clear a moderately cluttered dynamic world.
+#
+# Validated comparison (n=30 episodes, Wilson 95% CIs, perfect sensor):
+#
+#   planner    succ%   ±     coll%   ±     plan_ms mean / p95
+#   straight     0.0   5.7   100.0   5.7    0.04 /  0.05    ← baseline floor
+#   astar       20.0  13.9    80.0  13.9    4.75 /  8.97    ← snapshot-only
+#   mpc        100.0   5.7     0.0   5.7   52.16 / 56.96    ← Pareto config
+#
+# Findings:
+#  - MPC at the Pareto config (n_samples=16, horizon=20) **clears every
+#    episode**. Its constant-velocity peer prediction lets it route around
+#    the bouncing obstacles' *future* positions, while A* sees only a
+#    snapshot at replan time and walks into where they'll be 0.2 s later.
+#  - A* at 20 % vs MPC at 100 % isolates the value of motion prediction:
+#    same world, same dynamics, only the planner's view of "where will
+#    the obstacles be?" differs. The +80 pp gap is the experimentally-
+#    measured value of the prediction model in this scenario.
+#  - Straight-line floors at 0 % — the dynamic obstacles cross the diagonal
+#    corridor on a schedule that always intersects naive bee-line travel
+#    over 30 episodes. Useful sanity floor.
+#  - Compute cost: MPC is ~11× per-replan over A* (52 ms vs 4.8 ms) and
+#    ~1300× over straight-line. With ~5 Hz replanning that's a real
+#    budget — for an embedded payload with sub-ms requirements, A*'s
+#    20 % may still beat MPC's 100 % at higher speeds where MPC's 56 ms
+#    p95 stops fitting in the replan period.
+#
+# Reproduce with:
+#   uav-nav run examples/exp_compare_astar.yaml
+#   uav-nav run examples/exp_compare_straight.yaml
+#   uav-nav run examples/exp_compare_mpc.yaml
+#   uav-nav compare results/cmp_astar results/cmp_straight results/cmp_mpc
+name: cmp_astar
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: grid_world
+  size: [50, 50]
+  start: [2.0, 2.0]
+  goal: [45.0, 45.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 25
+    seed: 7
+  dynamic_obstacles:
+    - start: [25.0, 10.0]
+      velocity: [0.0, 6.0]
+      reflect: true
+      radius: 0.8
+    - start: [10.0, 30.0]
+      velocity: [5.0, 0.0]
+      reflect: true
+      radius: 0.8
+    - start: [35.0, 25.0]
+      velocity: [-4.0, 3.0]
+      reflect: true
+      radius: 0.8
+
+simulator:
+  type: dummy_2d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: astar
+  max_speed: 10.0
+  replan_period: 0.2
+  resolution: 1.0
+  inflate: 1
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/cmp_astar
