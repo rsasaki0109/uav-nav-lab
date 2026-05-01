@@ -206,6 +206,49 @@
 #     --param planner.inflate=1,2,3,4,5 \
 #     --param planner.safety_margin=0.5,1.0,1.5,2.0,3.0 \
 #     --param num_episodes=20 -j 4
+#
+# Predictor ablation at the persistent cliff (Pareto, delay=0.5 s,
+# speed=15 m/s; n=30 per cell, success rate %):
+#
+#   constant_velocity  delay_comp=0.00  →  26.7% [14.2, 44.4]  (baseline)
+#   kalman_velocity    delay_comp=0.00  →  26.7% [14.2, 44.4]  (no gain)
+#   kalman_velocity    delay_comp=0.25  →  26.7% [14.2, 44.4]
+#   kalman_velocity    delay_comp=0.50  →  20.0% [ 9.5, 37.3]  (worse)
+#   kalman_velocity    delay_comp=0.75  →  16.7% [ 7.3, 33.6]  (worse)
+#
+# Negative result, methodologically important. The Kalman tracker
+# (position-only measurements, internal velocity estimation) matches
+# constant-velocity exactly at delay_comp=0 — the cliff is *not*
+# about velocity-estimate quality. Adding `delay_compensation` on
+# the predictor side, expected to "project obstacles forward by the
+# known sensor lag," actively hurts: the MPC rollout starts from a
+# stale ego pose (the same delayed sensor reports both ego and
+# obstacle observations), so projecting only the obstacles to
+# "now" while the ego model still thinks it is at "now − 0.5 s"
+# creates a temporal misalignment. The drone plans against future
+# obstacles using a past self.
+#
+# Engineering corollary: lifting the cliff requires *systemic*
+# extrapolation — ego-pose forward projection in the runner, or
+# splitting ego and obstacle perception into separately-tunable
+# pipelines. Predictor-side tricks alone cannot bridge the
+# delay × max_speed > danger_zone gap.
+#
+# Reproduce with:
+#   uav-nav sweep examples/exp_predictive.yaml \
+#     --param planner.horizon=20 --param planner.n_samples=16 \
+#     --param sensor.type=delayed --param sensor.delay=0.5 \
+#     --param planner.max_speed=15 \
+#     --param planner.predictor.type=constant_velocity,kalman_velocity \
+#     --param num_episodes=30 -j 4
+#   # and a separate sweep over kalman delay_compensation:
+#   uav-nav sweep examples/exp_predictive.yaml \
+#     --param planner.horizon=20 --param planner.n_samples=16 \
+#     --param sensor.type=delayed --param sensor.delay=0.5 \
+#     --param planner.max_speed=15 \
+#     --param planner.predictor.type=kalman_velocity \
+#     --param planner.predictor.delay_compensation=0.0,0.25,0.5,0.75 \
+#     --param num_episodes=30 -j 4
 name: predictive_mpc
 seed: 42
 num_episodes: 5

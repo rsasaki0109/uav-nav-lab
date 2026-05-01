@@ -430,6 +430,68 @@ def test_constant_velocity_predictor_extrapolates_linearly() -> None:
     assert np.allclose(traj[0, 2], [3.0, 6.0])
 
 
+def test_kalman_predictor_basic_roundtrip() -> None:
+    """Kalman predictor must (a) register, (b) produce the right shape,
+    (c) eventually agree with the truth on a clean constant-velocity
+    target after a few measurement updates."""
+    import numpy as np
+
+    from uav_nav_lab.predictor import build_predictor
+
+    p = build_predictor({"type": "kalman_velocity", "dt": 0.1,
+                         "process_noise_std": 0.1, "measurement_noise_std": 0.05})
+    # Simulate a target moving at v=(2, 0) starting from (0, 0) for ~10 dt
+    truth_v = np.array([2.0, 0.0])
+    pos = np.zeros(2)
+    horizon_dts = np.array([0.1, 0.5, 1.0])
+    for _ in range(10):
+        obs = [{"position": list(pos), "velocity": list(truth_v), "radius": 0.5}]
+        traj = p.predict(obs, horizon_dts)
+        assert traj.shape == (1, 3, 2)
+        pos = pos + truth_v * 0.1
+    # After 10 updates the KF velocity estimate should be close to truth
+    track_v = p._tracks[0]["x"][2:]
+    assert np.allclose(track_v, truth_v, atol=0.2)
+
+
+def test_kalman_track_associates_across_calls() -> None:
+    """A drifting target observed across multiple calls should remain a
+    single track (not be re-spawned every call as a brand-new one)."""
+    import numpy as np
+
+    from uav_nav_lab.predictor import build_predictor
+
+    p = build_predictor({"type": "kalman_velocity", "dt": 0.2,
+                         "association_threshold": 5.0})
+    horizon_dts = np.array([0.2])
+    pos = np.array([10.0, 10.0])
+    for _ in range(5):
+        obs = [{"position": list(pos), "velocity": [1.0, 0.0], "radius": 0.5}]
+        p.predict(obs, horizon_dts)
+        pos[0] += 0.2  # drift x by dt·v = 0.2 per call
+    assert len(p._tracks) == 1, "track was duplicated on each call"
+
+
+def test_kalman_delay_compensation_extrapolates_forward() -> None:
+    """With delay_compensation set, the output should sit ahead of the
+    raw rollout by delay_compensation × velocity."""
+    import numpy as np
+
+    from uav_nav_lab.predictor import build_predictor
+
+    base = build_predictor({"type": "kalman_velocity", "dt": 0.1,
+                            "delay_compensation": 0.0})
+    leaded = build_predictor({"type": "kalman_velocity", "dt": 0.1,
+                              "delay_compensation": 0.5})
+    obs = [{"position": [0.0, 0.0], "velocity": [3.0, 0.0], "radius": 0.5}]
+    dts = np.array([0.1])
+    a = base.predict(obs, dts)
+    b = leaded.predict(obs, dts)
+    # b should be 0.5 * 3.0 = 1.5 m further along x than a (with first-call
+    # bootstrap velocity from observation)
+    assert np.isclose(b[0, 0, 0] - a[0, 0, 0], 1.5, atol=0.05)
+
+
 def test_noisy_predictor_seed_is_deterministic() -> None:
     import numpy as np
 
