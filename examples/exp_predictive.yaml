@@ -111,6 +111,64 @@
 #     --param planner.inflate=1,2,3,4,5 \
 #     --param planner.safety_margin=0.5,1.0,1.5,2.0,3.0 \
 #     --param num_episodes=20 -j 4
+#
+# === IMPORTANT: re-validation at the Pareto-optimal MPC config ===
+#
+# The four ablations above use this YAML's existing defaults
+# (n_samples=32, horizon=60), which the n_samples × horizon Pareto
+# sweep showed to be suboptimal. Re-running the two big heatmaps at
+# the validated optimum (n_samples=16, horizon=20) materially
+# rewrites the conclusions:
+#
+#   replan_period × max_speed (success rate %, Pareto config):
+#     speed\period    0.1    0.2    0.5    1.0    2.0
+#         10         100    100     90     95     10
+#         15         100     90     90     55     30
+#         20          85     75     60     35     25
+#         25          55     55     35     15      0
+#         30          65     45     50      5      0
+#
+#   sensor.delay × max_speed (success rate %, Pareto + delayed sensor):
+#     delay\speed     10     15     20     25     30
+#       0.00         100     90     75     55     45
+#       0.05         100     90     75     55     45
+#       0.10          95     80     45     35     40
+#       0.20          85     80     45     60     55
+#       0.50          25     25     10     20     20
+#
+# What changes vs. the suboptimal-default tables above:
+#  - The "dynamic-feasibility cliff at 25 m/s" (0% across the row in
+#    the prior heatmap) was a horizon=60 artifact. With horizon=20
+#    success at speed=25/30 jumps to 35–65% at short replan periods.
+#  - replan_period now matters clearly. At fixed speed, going from
+#    0.1 → 2.0 s drops success by 40–70 pp (vs ≤10 pp before). The
+#    earlier "replan period barely affects success" was partly a
+#    CPU-saturation artifact: at horizon=60 every replan took ~200
+#    ms, so even replan_period=0.1 s could not actually keep up.
+#  - delay tolerance is dramatically better: speed=15 / delay=0.2 s
+#    jumps from 15% → 80% (+65 pp); the entire delay-≤0.2 s band
+#    sits ≥ 45% across all speeds. The delay=0.5 s cliff persists
+#    in both configs (≤ 25%) — once delay exceeds horizon × dt_plan
+#    (= 1.0 s) the rollout's prediction is fundamentally broken.
+#
+# Methodological lesson: always validate ablation conclusions at
+# the Pareto-optimal config of the planner. Suboptimal MPC settings
+# can mask both ceilings (max feasible speed) and sensitivities
+# (replan-period effect, delay tolerance).
+#
+# Reproduce both with:
+#   uav-nav sweep examples/exp_predictive.yaml \
+#     --param planner.horizon=20 --param planner.n_samples=16 \
+#     --param planner.max_speed=10,15,20,25,30 \
+#     --param planner.replan_period=0.1,0.2,0.5,1.0,2.0 \
+#     --param num_episodes=20 -j 4
+#
+#   uav-nav sweep examples/exp_predictive.yaml \
+#     --param planner.horizon=20 --param planner.n_samples=16 \
+#     --param sensor.type=delayed \
+#     --param sensor.delay=0.0,0.05,0.1,0.2,0.5 \
+#     --param planner.max_speed=10,15,20,25,30 \
+#     --param num_episodes=20 -j 4
 name: predictive_mpc
 seed: 42
 num_episodes: 5
