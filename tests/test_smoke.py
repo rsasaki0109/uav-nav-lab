@@ -521,6 +521,23 @@ def test_multi_drone_joint_metrics_in_summary(tmp_path: Path) -> None:
     assert "joint_collision_ci95" in summary
 
 
+def test_summary_includes_planner_dt_compute_metrics(tmp_path: Path) -> None:
+    """The recorder logs `planner_dt_ms` per replan; eval must aggregate
+    that into mean / p95 / max compute cost so compute-budget studies
+    do not need a second pass over the raw episode logs."""
+    cfg = _basic_cfg()
+    cfg.num_episodes = 2
+    cfg.simulator["max_steps"] = 200
+    run_dir = run_experiment(cfg, tmp_path / "compute")
+    summary = evaluate_run(run_dir)
+    for key in ("planner_dt_ms_mean", "planner_dt_ms_p95", "planner_dt_ms_max"):
+        assert key in summary, f"summary missing {key}"
+        assert summary[key]["mean"] >= 0.0
+        # consistency across statistics: max ≥ p95 ≥ mean
+    assert summary["planner_dt_ms_max"]["mean"] >= summary["planner_dt_ms_p95"]["mean"]
+    assert summary["planner_dt_ms_p95"]["mean"] >= summary["planner_dt_ms_mean"]["mean"]
+
+
 def test_multi_drone_viz_groups_drones_per_episode(tmp_path: Path) -> None:
     pytest.importorskip("matplotlib")
     from uav_nav_lab.viz import viz_run

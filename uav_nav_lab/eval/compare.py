@@ -18,8 +18,8 @@ def _hw(ci: list[float]) -> float:
 
 
 def format_comparison_text(summaries: list[dict[str, Any]]) -> str:
-    headers = ("name", "succ%", "±", "coll%", "±", "avg_v", "ATE")
-    widths = (28, 6, 5, 6, 5, 9, 11)
+    headers = ("name", "succ%", "±", "coll%", "±", "avg_v", "ATE", "plan_ms")
+    widths = (28, 6, 5, 6, 5, 9, 11, 12)
     lines = []
     head = "  ".join(h.ljust(w) for h, w in zip(headers, widths))
     lines.append(head)
@@ -30,6 +30,14 @@ def format_comparison_text(summaries: list[dict[str, Any]]) -> str:
         coll_hw = _hw(s["collision_ci95"]) * 100
         avg_hw = (s["avg_speed"]["ci_hi"] - s["avg_speed"]["ci_lo"]) / 2.0
         ate_hw = (s["ate_rms"]["ci_hi"] - s["ate_rms"]["ci_lo"]) / 2.0
+        # Newer runs include compute-cost stats; fall back to "—" for runs
+        # produced before this column was added so old artifacts still print.
+        if "planner_dt_ms_mean" in s:
+            mean = s["planner_dt_ms_mean"]["mean"]
+            p95 = s["planner_dt_ms_p95"]["mean"]
+            plan_str = f"{mean:.2f}/{p95:.2f}"
+        else:
+            plan_str = "—"
         row = (
             name[: widths[0]].ljust(widths[0]),
             f"{s['success_rate'] * 100:5.1f}".rjust(widths[1]),
@@ -38,6 +46,7 @@ def format_comparison_text(summaries: list[dict[str, Any]]) -> str:
             f"{coll_hw:4.1f}".rjust(widths[4]),
             f"{s['avg_speed']['mean']:.2f}±{avg_hw:.2f}".rjust(widths[5]),
             f"{s['ate_rms']['mean']:.3f}±{ate_hw:.3f}".rjust(widths[6]),
+            plan_str.rjust(widths[7]),
         )
         lines.append("  ".join(row))
     return "\n".join(lines)

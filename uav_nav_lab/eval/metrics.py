@@ -57,9 +57,23 @@ def _continuous_ci(values: np.ndarray, z: float = _Z95) -> dict[str, float]:
             "min": float(values.min()), "max": float(values.max()), "n": n}
 
 
+def _planner_dt_stats(replans: list[dict[str, Any]]) -> tuple[float, float, float]:
+    """Per-episode planner-call latency aggregates: (mean, p95, max) in ms.
+
+    The recorder logs `planner_dt_ms` per replan; we keep both the mean (for
+    average compute budget) and the p95 / max (for worst-case onboard
+    scheduling, where a single 50 ms hiccup matters more than a low average).
+    """
+    if not replans:
+        return 0.0, 0.0, 0.0
+    dts = np.asarray([float(r.get("planner_dt_ms", 0.0)) for r in replans], dtype=float)
+    return float(dts.mean()), float(np.percentile(dts, 95)), float(dts.max())
+
+
 def summarize_episode(ep: dict[str, Any]) -> dict[str, Any]:
     steps = ep.get("steps", [])
     replans = ep.get("replans", [])
+    plan_dt_mean, plan_dt_p95, plan_dt_max = _planner_dt_stats(replans)
     if not steps:
         return {
             "outcome": ep.get("outcome", "unknown"),
@@ -68,6 +82,9 @@ def summarize_episode(ep: dict[str, Any]) -> dict[str, Any]:
             "avg_speed": 0.0,
             "replans": len(replans),
             "ate_rms": 0.0,
+            "planner_dt_ms_mean": plan_dt_mean,
+            "planner_dt_ms_p95": plan_dt_p95,
+            "planner_dt_ms_max": plan_dt_max,
         }
     true_pos = np.asarray([s["true_pos"] for s in steps], dtype=float)
     obs_pos = np.asarray([s["observed_pos"] for s in steps], dtype=float)
@@ -84,6 +101,9 @@ def summarize_episode(ep: dict[str, Any]) -> dict[str, Any]:
         "avg_speed": avg_speed,
         "replans": len(replans),
         "ate_rms": ate_rms,
+        "planner_dt_ms_mean": plan_dt_mean,
+        "planner_dt_ms_p95": plan_dt_p95,
+        "planner_dt_ms_max": plan_dt_max,
     }
 
 
@@ -130,6 +150,9 @@ def evaluate_run(run_dir: Path) -> dict[str, Any]:
         "avg_speed": _agg("avg_speed"),
         "replans": _agg("replans"),
         "ate_rms": _agg("ate_rms"),
+        "planner_dt_ms_mean": _agg("planner_dt_ms_mean"),
+        "planner_dt_ms_p95": _agg("planner_dt_ms_p95"),
+        "planner_dt_ms_max": _agg("planner_dt_ms_max"),
         "episodes": per_ep,
     }
     # Joint (multi-drone) aggregation: read the per-episode joint summaries
@@ -187,6 +210,9 @@ def format_summary_text(summary: dict[str, Any]) -> str:
         f"  path length:    {_fmt_cont(summary['path_length'], unit=' m')}",
         f"  replans/ep:     {_fmt_cont(summary['replans'], fmt='.1f')}",
         f"  ATE (rms):      {_fmt_cont(summary['ate_rms'], fmt='.3f', unit=' m')}",
+        f"  planner dt:     {_fmt_cont(summary['planner_dt_ms_mean'], fmt='.2f', unit=' ms')}"
+        f"  [p95: {summary['planner_dt_ms_p95']['mean']:.2f} ms,"
+        f" max: {summary['planner_dt_ms_max']['mean']:.2f} ms]",
     ]
     if "joint_n_episodes" in summary:
         nj = summary["joint_n_episodes"]

@@ -19,11 +19,21 @@ import yaml
 from .config import get_dotted
 from .eval.metrics import evaluate_run
 
+def _safe_dt(s: dict, key: str) -> float:
+    """Read planner-dt block from a summary that may pre-date the column."""
+    block = s.get(key, {})
+    return float(block.get("mean", 0.0)) if isinstance(block, dict) else 0.0
+
+
 _METRICS_DEFAULT = [
     ("success_rate", "success rate", "%", lambda s: s["success_rate"] * 100),
     ("collision_rate", "collision rate", "%", lambda s: s["collision_rate"] * 100),
     ("avg_speed_mean", "avg speed (m/s)", "", lambda s: s["avg_speed"]["mean"]),
     ("ate_rms_mean", "ATE rms (m)", "", lambda s: s["ate_rms"]["mean"]),
+    ("planner_dt_ms_mean", "planner dt mean (ms)", "",
+     lambda s: _safe_dt(s, "planner_dt_ms_mean")),
+    ("planner_dt_ms_p95", "planner dt p95 (ms)", "",
+     lambda s: _safe_dt(s, "planner_dt_ms_p95")),
 ]
 
 # Multi-drone runs report a separate `joint_*` block in summary.json; we
@@ -36,6 +46,10 @@ _METRICS_MULTI = [
      lambda s: s["joint_collision_rate"] * 100),
     ("avg_speed_mean", "avg speed (m/s)", "", lambda s: s["avg_speed"]["mean"]),
     ("ate_rms_mean", "ATE rms (m)", "", lambda s: s["ate_rms"]["mean"]),
+    ("planner_dt_ms_mean", "planner dt mean (ms)", "",
+     lambda s: _safe_dt(s, "planner_dt_ms_mean")),
+    ("planner_dt_ms_p95", "planner dt p95 (ms)", "",
+     lambda s: _safe_dt(s, "planner_dt_ms_p95")),
 ]
 
 
@@ -171,7 +185,7 @@ def sweep_viz(sweep_root: Path) -> Path:
     # to the per-drone-episode rates; pick the right metric set off the
     # first run's summary so the sweep figure shows the right view.
     metrics = _METRICS_MULTI if "joint_success_rate" in runs[0]["summary"] else _METRICS_DEFAULT
-    fig, axes = plt.subplots(2, 2, figsize=(11, 9))
+    fig, axes = plt.subplots(3, 2, figsize=(11, 13))
     for ax, (_, label, _, fn) in zip(axes.flat, metrics):
         if len(keys) == 1:
             _line_plot(plt, ax, runs, keys[0], label, fn)
