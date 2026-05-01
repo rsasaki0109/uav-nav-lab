@@ -20,10 +20,11 @@ dynamic obstacles to a goal — same scenario used for every result below.*
 </div>
 
 > **TL;DR.** On a 50 × 50 dynamic-obstacle scenario (n=30 episodes,
-> Wilson 95 % CIs), this framework produces — from four one-line
+> Wilson 95 % CIs), this framework produces — from five one-line
 > `uav-nav run` invocations — straight-line **0 %**, A* **20 %**,
-> RRT **73 %**, Pareto-MPC **100 %**. Each example YAML carries the
-> table, the heatmap, and the reproduce command in its header.
+> RRT* **23 %** (CPU-saturated), RRT **73 %**, Pareto-MPC **100 %**.
+> Each example YAML carries the table, the heatmap, and the reproduce
+> command in its header.
 
 ---
 
@@ -122,7 +123,7 @@ Source layout:
 uav_nav_lab/
 ├── sim/         dummy_2d / dummy_3d (point-mass), airsim, ros2 (stubs)
 ├── scenario/    grid_world, voxel_world, multi_drone_grid
-├── planner/     astar, straight, mpc, rrt      (registry: PLANNER_REGISTRY)
+├── planner/     astar, straight, mpc, rrt, rrt_star  (registry: PLANNER_REGISTRY)
 ├── sensor/      perfect, delayed, kalman_delayed, lidar
 ├── predictor/   constant_velocity, noisy_velocity, kalman_velocity
 ├── runner/      experiment, multi (multi-drone), sweep
@@ -137,7 +138,7 @@ Backends at a glance:
 |---|---|---|
 | sim | `dummy_2d`, `dummy_3d` (+ `airsim`, `ros2` stubs) | `SIM_REGISTRY` |
 | scenario | `grid_world`, `voxel_world`, `multi_drone_grid` | `SCENARIO_REGISTRY` |
-| planner | `astar`, `straight`, `mpc`, `rrt` | `PLANNER_REGISTRY` |
+| planner | `astar`, `straight`, `mpc`, `rrt`, `rrt_star` | `PLANNER_REGISTRY` |
 | sensor | `perfect`, `delayed`, `kalman_delayed`, `lidar` | `SENSOR_REGISTRY` |
 | predictor | `constant_velocity`, `noisy_velocity`, `kalman_velocity` | `PREDICTOR_REGISTRY` |
 
@@ -158,20 +159,23 @@ only the planner changes. n=30 episodes per configuration:
 
 <table>
 <tr>
-<td align="center"><b>straight</b><br>0.0 % ± 5.7</td>
-<td align="center"><b>astar</b><br>20.0 % ± 13.9</td>
-<td align="center"><b>rrt</b><br>73.3 % ± 15.1</td>
-<td align="center"><b>mpc (Pareto)</b><br>100.0 % ± 5.7</td>
+<td align="center"><b>straight</b><br>0.0 %</td>
+<td align="center"><b>astar</b><br>20.0 %</td>
+<td align="center"><b>rrt*</b><br>23.3 %</td>
+<td align="center"><b>rrt</b><br>73.3 %</td>
+<td align="center"><b>mpc (Pareto)</b><br>100.0 %</td>
 </tr>
 <tr>
-<td><img src="docs/images/cmp_straight.png" width="220"></td>
-<td><img src="docs/images/cmp_astar.png" width="220"></td>
-<td><img src="docs/images/cmp_rrt.png" width="220"></td>
-<td><img src="docs/images/cmp_mpc.png" width="220"></td>
+<td><img src="docs/images/cmp_straight.png" width="170"></td>
+<td><img src="docs/images/cmp_astar.png" width="170"></td>
+<td><img src="docs/images/cmp_rrt_star.png" width="170"></td>
+<td><img src="docs/images/cmp_rrt.png" width="170"></td>
+<td><img src="docs/images/cmp_mpc.png" width="170"></td>
 </tr>
 <tr>
 <td align="center">plan_dt<br>0.04 / 0.05 ms</td>
 <td align="center">plan_dt<br>4.75 / 8.97 ms</td>
+<td align="center">plan_dt<br>464 / 521 ms ⚠️</td>
 <td align="center">plan_dt<br>29.99 / 64.27 ms</td>
 <td align="center">plan_dt<br>52.16 / 56.96 ms</td>
 </tr>
@@ -183,12 +187,18 @@ beats grid A* by +53 pp at similar compute** — the path is not constrained
 to the 8-connected lattice, so straight-line edges across open space
 move the drone past obstacles before they cross. MPC at the Pareto
 config (`n_samples=16, horizon=20`) is the only planner with explicit
-motion prediction and clears every episode. The full ladder
-`straight < astar < rrt < mpc` cleanly separates *no reasoning <
-grid reasoning < continuous-space reasoning < model-based prediction*.
+motion prediction and clears every episode.
 
-> Reproduce: `uav-nav run examples/exp_compare_{straight,astar,rrt,mpc}.yaml`,
-> then `uav-nav compare results/cmp_straight results/cmp_astar results/cmp_rrt results/cmp_mpc`.
+**Counter-intuitively, RRT\* loses to plain RRT here.** Asymptotic
+optimality costs ~15× the per-replan compute (464 ms mean vs 30 ms),
+which is 2.3× the 200 ms replan period — every replan arrives late, so
+the drone follows stale plans into moving obstacles. Optimality cannot
+beat freshness in a dynamic scenario unless the optimization fits the
+replan budget. Same Pareto-saturation trap the 2D MPC re-validation
+saga uncovered, just on the search side.
+
+> Reproduce: `uav-nav run examples/exp_compare_{straight,astar,rrt,rrt_star,mpc}.yaml`,
+> then `uav-nav compare results/cmp_straight results/cmp_astar results/cmp_rrt results/cmp_rrt_star results/cmp_mpc`.
 
 ### MPC compute Pareto
 
@@ -405,7 +415,7 @@ sounds fanciest — the framework is built to make that picking trivial.
   + a CLI smoke job.
 - **5 sensor backends** (`perfect`, `delayed`, `kalman_delayed`, `lidar`),
   **3 predictor backends** (`constant_velocity`, `noisy_velocity`,
-  `kalman_velocity`), **4 planners** (`astar`, `straight`, `mpc`, `rrt`),
+  `kalman_velocity`), **5 planners** (`astar`, `straight`, `mpc`, `rrt`, `rrt_star`),
   **3 scenarios** (`grid_world`, `voxel_world`, `multi_drone_grid`).
 - All ablation results are reproducible from the example YAMLs by
   copy-pasting one `uav-nav sweep ...` line.
@@ -419,8 +429,8 @@ changing the rest of the stack.
 - 3D perception-latency re-validation in `voxel_world` (Pareto already
   validated — see findings).
 - Wind / disturbance model in `dummy_*` simulators.
-- RRT* (rewiring) on top of the new RRT backend; CHOMP / trajectory-
-  optimisation planners.
+- CHOMP / trajectory-optimisation planners on top of the existing
+  RRT / RRT* sampling backends.
 - Real-backend drivers (one of AirSim / PX4-SITL / ROS 2 Gazebo) wired
   through the `SimInterface` ABC.
 

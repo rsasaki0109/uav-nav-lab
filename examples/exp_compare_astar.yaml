@@ -11,6 +11,7 @@
 #   planner    succ%   ±     coll%   ±     plan_ms mean / p95
 #   straight     0.0   5.7   100.0   5.7    0.04 /  0.05    ← baseline floor
 #   astar       20.0  13.9    80.0  13.9    4.75 /  8.97    ← snapshot-only grid
+#   rrt_star    23.3  14.6    76.7  14.6  464.19 / 521.32   ← optimal but CPU-saturated
 #   rrt         73.3  15.1    26.7  15.1   29.99 / 64.27    ← snapshot-only continuous
 #   mpc        100.0   5.7     0.0   5.7   52.16 / 56.96    ← Pareto config
 #
@@ -25,9 +26,16 @@
 #    RRT's continuous edges traverse open space in straight lines,
 #    arriving past obstacle crossings before they happen. A*'s
 #    8-connected grid path zigzags, sitting in obstacle paths longer.
+#  - **RRT* loses to plain RRT in this regime** — 23 % vs 73 %. The
+#    rewiring step costs ~15× more compute (464 ms mean vs 30 ms),
+#    overshoots the 200 ms replan_period by 2.3×, and every replan
+#    arrives late. The drone follows stale plans into moving obstacles.
+#    Asymptotic optimality is worthless if it doesn't fit the replan
+#    budget — same Pareto-saturation trap the 2D MPC re-validation
+#    saga uncovered, just on the search side.
 #  - The full ladder reads as:
-#      no reasoning   < grid reasoning < continuous reasoning < model-based
-#       (straight 0%)  (astar 20%)      (rrt 73%)              (mpc 100%)
+#      no reasoning   < grid reasoning < CPU-saturated < continuous reasoning < model-based
+#       (straight 0%)  (astar 20%)      (rrt_star 23%)  (rrt 73%)              (mpc 100%)
 #  - A* at 20 % vs MPC at 100 % isolates the value of motion prediction
 #    plus continuous-space planning combined; A* vs RRT (20 → 73 %)
 #    isolates continuous-space planning alone; RRT vs MPC (73 → 100 %)
