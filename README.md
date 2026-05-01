@@ -267,10 +267,28 @@ Same 3D scenario, sensor.delay × max_speed sweep at the 3D Pareto config
 The cliff transfers from 2D to 3D in the same `delay=0.5 × speed≥20 m/s`
 corner. 2D had this region at 10-25 %; 3D softens it to 33-50 % —
 the extra escape volume helps but does not eliminate the failure mode.
-The engineering principle holds: when `delay × max_speed` approaches
-the danger-zone radius (~3.5 m here), no planner-side shield fully
-compensates. The remediation ladder built for 2D (sensor extrapolation
-+ velocity_window smoothing) is the obvious next experiment to port.
+
+**3D cliff remediation: the velocity_window optimum *inverts* vs 2D.**
+At the 3D cliff cell (delay=0.5, speed=20, n=12):
+
+| sensor config | succ % | CI95 |
+|---|---|---|
+| baseline (no extrap) | 33.3 | [13.8, 60.9] |
+| `extrapolate=true, window=1` | **83.3** | [55.2, 95.3] |
+| `extrapolate=true, window=3` | 66.7 | [39.1, 86.2] |
+| `extrapolate=true, window=5` | 58.3 | [32.0, 80.7] |
+| `extrapolate=true, window=10` | 33.3 | [13.8, 60.9] |
+
+CV ego extrapolation is the same big lever in 3D — +50 pp at window=1,
+Wilson 95 % CIs do not overlap. But **the optimum inverts**: 2D's
+peak was window=5, 3D's peak is window=1. The 3D escape volume lets
+the drone trace smoother trajectories, so the 1-sample finite-
+difference velocity is already accurate; smoothing only adds lag,
+and lag hurts most at high speed where the cliff lives.
+
+Engineering takeaway: the *parameter setting* of a remediation does
+not transfer across dimensionalities even when the *technique* does.
+Always re-tune ego-extrapolation window per scenario regime.
 
 ### Pareto config materially rewrites prior conclusions
 
