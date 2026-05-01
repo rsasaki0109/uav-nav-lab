@@ -1,29 +1,49 @@
+<div align="center">
+
 # uav-nav-lab
 
-OSS Python research framework for **high-speed UAV navigation**, built to
-let you run controlled ablations in minutes and see whether a proposed
-change actually wins. Pluggable simulator / scenario / planner / sensor /
-predictor backends; YAML experiments; Cartesian-product parameter sweeps;
-Wilson-score / SEM confidence intervals on every metric; multi-drone
-scenarios with joint-success aggregation; built-in heatmap and trajectory
-visualisation.
+**An OSS Python research framework for high-speed UAV navigation —
+controlled ablations in minutes, statistical CIs on every metric, and
+every example YAML carries its own validated finding.**
 
-The framework deliberately ships small primitives plus a CLI — research
-runs through `uav-nav run|sweep|eval|compare|viz|anim`, and every
-example YAML carries the validated sweep result it was designed to
-produce so a reader sees the conclusion before the config.
+[![CI](https://github.com/rsasaki0109/uav-nav-lab/actions/workflows/ci.yml/badge.svg)](https://github.com/rsasaki0109/uav-nav-lab/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/rsasaki0109/uav-nav-lab/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/rsasaki0109/uav-nav-lab)](https://github.com/rsasaki0109/uav-nav-lab/releases)
+[![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
+
+<img src="docs/images/demo_mpc.gif" alt="Pareto-MPC routing through bouncing dynamic obstacles" width="540">
+
+*Pareto-MPC (n_samples=16, horizon=20) routing through three bouncing
+dynamic obstacles to a goal — same scenario used for every result below.*
+
+</div>
+
+---
+
+## What you get
+
+- **Pluggable backends** for sim / scenario / planner / sensor / predictor —
+  add one with a `@REGISTRY.register("name")` decorator and a
+  `from_config(cfg)` classmethod.
+- **YAML experiments** + Cartesian-product sweeps:
+  `uav-nav sweep cfg.yaml --param k=a,b,c --param k2=start:stop:step`.
+- **Statistical rigor by default**: Wilson 95% intervals on rates,
+  mean ± 1.96·SEM on continuous metrics, per-call planner compute
+  budget (mean / p95 / max ms).
+- **Multi-drone** scenarios with joint-success aggregation and palette viz.
+- **6-panel sweep heatmap** for compute-aware ablations, animated GIF replays.
 
 ## Why
 
 Most UAV planning research either (a) hard-codes a single MPC variant,
 single sensor, single scenario, and reports a number, or (b) buries
-ablations under stacks of glue code. Neither makes it easy to ask "does
-this idea actually beat what I already have, with the CI to back it?".
+ablations under stacks of glue code. Neither makes it easy to ask *"does
+this idea actually beat what I already have, with the CI to back it?"*
 
-`uav-nav-lab` is the framework I wanted while doing the research itself:
+`uav-nav-lab` is the framework I wanted *while* doing the research:
 declare the experiment in YAML, sweep with `--param`, get heatmaps and
-Wilson 95% CIs out of the box, and have every config carry its own
-research finding so the file is the artifact, not a Notion page.
+Wilson 95 % CIs out of the box, and have every config carry its own
+validated finding — so the file is the artifact, not a Notion page.
 
 ## Quick start
 
@@ -33,11 +53,9 @@ cd uav-nav-lab
 pip install -e '.[dev,viz]'        # numpy + pyyaml + matplotlib + pytest
 pytest -q                          # 42 tests, runs in seconds
 
-# basic A* run, 5 episodes, prints success/collision/timeout with
-# Wilson 95% CIs and per-call planner compute cost
-uav-nav run examples/exp_basic.yaml
-uav-nav eval results/basic_astar
-uav-nav viz  results/basic_astar
+uav-nav run     examples/exp_basic.yaml
+uav-nav eval    results/basic_astar
+uav-nav viz     results/basic_astar
 ```
 
 A 2D heatmap sweep is one CLI invocation:
@@ -56,15 +74,15 @@ uav-nav viz <out>     # → 6-panel sweep_summary.png
 | command | what |
 |---|---|
 | `uav-nav run <yaml>` | run all episodes, write per-episode JSONs + `summary.json` |
-| `uav-nav eval <run_dir>` | recompute metrics from logs, print Wilson 95% rates + planner-dt budget |
+| `uav-nav eval <run_dir>` | recompute metrics from logs, print Wilson 95 % rates + planner-dt budget |
 | `uav-nav compare <a> <b> ...` | side-by-side table with ± half-widths |
 | `uav-nav sweep <yaml> --param k=spec` | Cartesian-product over `--param`s; each cell gets its own dir |
-| `uav-nav viz <run_or_sweep>` | trajectory PNG per episode, or 1D/2D sweep heatmap |
+| `uav-nav viz <run_or_sweep>` | trajectory PNG per episode, or 1D / 2D sweep heatmap |
 | `uav-nav anim <run_dir>` | animated GIF replay (2D) |
 | `uav-nav list` | enumerate registered planners / sensors / sims / scenarios |
 
 `--param` syntax: `start:stop:step` for ranges, `a,b,c` for explicit lists,
-`[3,0]` for vector values, `true`/`false` literals. Three-level dotted
+`[3,0]` for vector values, `true` / `false` literals. Three-level dotted
 keys work: `planner.predictor.velocity_noise_std=0.0,0.5,1.0`.
 
 ## Architecture
@@ -90,26 +108,40 @@ decorator and a `from_config(cfg)` classmethod — the CLI picks it up via
 
 Each finding lives in the comment header of the YAML that produces it,
 along with a one-line `uav-nav sweep` invocation that reproduces it.
-Wilson 95% intervals on rates, mean ± 1.96·SEM on continuous metrics.
+Wilson 95 % intervals on rates, mean ± 1.96·SEM on continuous metrics.
 
-### Planner head-to-head on dynamic obstacles
+### 🏁 Planner head-to-head on dynamic obstacles
 
-`examples/exp_compare_{straight,astar,mpc}.yaml` — same 50×50 world,
-same three bouncing obstacles, same perfect sensor, only the planner
-changes (n=30 each):
+Same 50 × 50 world, same three bouncing obstacles, same perfect sensor —
+only the planner changes. n=30 episodes per configuration:
 
-| planner | succ % | coll % | plan_ms mean / p95 |
-|---|---|---|---|
-| straight     |   0.0 ± 5.7  | 100.0 ± 5.7 |  0.04 /  0.05 |
-| astar        |  20.0 ± 13.9 |  80.0 ± 13.9 |  4.75 /  8.97 |
-| mpc (Pareto) | **100.0** ± 5.7 |   0.0 ± 5.7 | 52.16 / 56.96 |
+<table>
+<tr>
+<td align="center"><b>straight</b><br>0.0 % ± 5.7</td>
+<td align="center"><b>astar</b><br>20.0 % ± 13.9</td>
+<td align="center"><b>mpc (Pareto)</b><br>100.0 % ± 5.7</td>
+</tr>
+<tr>
+<td><img src="docs/images/cmp_straight.png" width="280"></td>
+<td><img src="docs/images/cmp_astar.png" width="280"></td>
+<td><img src="docs/images/cmp_mpc.png" width="280"></td>
+</tr>
+<tr>
+<td align="center">plan_dt<br>0.04 / 0.05 ms</td>
+<td align="center">plan_dt<br>4.75 / 8.97 ms</td>
+<td align="center">plan_dt<br>52.16 / 56.96 ms</td>
+</tr>
+</table>
 
 A* sees only a snapshot at replan time and walks into where the bouncing
-obstacles will be 0.2 s later — 20 % success. MPC at the Pareto config
-(n_samples=16, horizon=20) routes around future obstacle positions and
-clears every episode. The +80 pp gap is the experimentally-measured
-value of having a motion model in this scenario, paid for at ~11× the
-per-replan cost of A*.
+obstacles will be 0.2 s later — 20 %. MPC at the Pareto config
+(`n_samples=16, horizon=20`) routes around future obstacle positions and
+clears every episode. The +80 pp gap between A* and Pareto-MPC is the
+experimentally-measured value of having a motion model in this scenario,
+paid for at ~11× the per-replan cost of A*.
+
+> Reproduce: `uav-nav run examples/exp_compare_{straight,astar,mpc}.yaml`,
+> then `uav-nav compare results/cmp_straight results/cmp_astar results/cmp_mpc`.
 
 ### MPC compute Pareto
 
@@ -123,38 +155,39 @@ per-replan cost of A*.
 | 64  | 100 | 100 | 75 | 60 | 45 |
 | 128 | 100 | 100 | 95 | 80 | 40 |
 
-Sole Pareto-optimal point: **n_samples=16, horizon=20 → 100% / 51 ms**.
-Longer rollouts actively hurt success (the reach-goal bonus fires less
-often when the rollout overshoots the goal radius mid-trajectory).
+Sole Pareto-optimal point: **n_samples=16, horizon=20 → 100 % / 51 ms**.
+Longer rollouts actively *hurt* success — the reach-goal bonus fires
+less often when the rollout overshoots the goal radius mid-trajectory.
 
 ### Pareto config materially rewrites prior conclusions
 
 The previous heatmap on the same scenario at the YAML's old defaults
 (n_samples=32, horizon=60) reported a "dynamic-feasibility cliff at
-25 m/s". At the Pareto config that cliff disappears (35–65% success at
-speed=25-30 m/s), and replan_period — which "barely mattered" before —
-now drives a 40–70 pp swing across 0.1–2.0 s. The earlier conclusion was
-partly a CPU-saturation artifact: at horizon=60 every replan took ~200 ms,
-so even replan_period=0.1 s could not actually keep up.
+25 m/s". At the Pareto config that cliff disappears (35 – 65 % success
+at speed = 25-30 m/s), and replan_period — which "barely mattered"
+before — now drives a 40 – 70 pp swing across 0.1 – 2.0 s. The earlier
+conclusion was partly a CPU-saturation artifact: at horizon=60 every
+replan took ~200 ms, so even replan_period=0.1 s could not actually
+keep up.
 
-**Methodological lesson** baked into the YAML header: always validate
-ablation conclusions at the planner's Pareto-optimal config — suboptimal
-MPC settings can mask both ceilings (max feasible speed) and
-sensitivities (replan-period effect, delay tolerance).
+> **Methodological lesson** baked into the YAML header: always validate
+> ablation conclusions at the planner's Pareto-optimal config —
+> suboptimal MPC settings can mask both ceilings (max feasible speed)
+> and sensitivities (replan-period effect, delay tolerance).
 
 ### Multi-drone N-scaling and peer-prediction coordination
 
 `examples/exp_multi_drone_{2,3,4}.yaml` — same world, only drone count
-changes. n=30, joint metrics with Wilson 95% CIs:
+changes. n=30, joint metrics with Wilson 95 % CIs:
 
 | N | joint succ | joint coll | per-drone succ |
 |---|---|---|---|
-| 2 | 96.7% [83, 99] | 3.3%  | 98.3% |
-| 3 | 70.0% [52, 83] | 30.0% | 87.8% |
-| 4 | 73.3% [56, 86] | 26.7% | 87.5% |
+| 2 | 96.7 % [83, 99] | 3.3 %  | 98.3 % |
+| 3 | 70.0 % [52, 83] | 30.0 % | 87.8 % |
+| 4 | 73.3 % [56, 86] | 26.7 % | 87.5 % |
 
 Independence-model expectation `joint = per_drone^N`:
-- N=4: actual 73.3 % > expected 58.6 %  (Δ = **+14.7 pp**)
+- N=4: actual 73.3 %  >  expected 58.6 %   (Δ = **+14.7 pp**)
 
 The MPC's constant-velocity peer prediction *correlates failures in the
 right direction* — when one drone yields, the others see its new
@@ -196,18 +229,26 @@ sounds fanciest — the framework is built to make that picking trivial.
 
 ## Status
 
-* v0.1.0 released, 42 tests, GitHub Actions CI on Python 3.10 / 3.11 / 3.12
+- **v0.1.0** released, 42 tests, GitHub Actions CI on Python 3.10 / 3.11 / 3.12
   + a CLI smoke job.
-* 5 sensor backends (`perfect`, `delayed`, `kalman_delayed`, `lidar`),
-  3 predictor backends (`constant_velocity`, `noisy_velocity`,
-  `kalman_velocity`), 3 planners (`astar`, `straight`, `mpc`),
-  3 scenarios (`grid_world`, `voxel_world`, `multi_drone_grid`).
-* All ablation results are reproducible from the example YAMLs by
+- **5 sensor backends** (`perfect`, `delayed`, `kalman_delayed`, `lidar`),
+  **3 predictor backends** (`constant_velocity`, `noisy_velocity`,
+  `kalman_velocity`), **3 planners** (`astar`, `straight`, `mpc`),
+  **3 scenarios** (`grid_world`, `voxel_world`, `multi_drone_grid`).
+- All ablation results are reproducible from the example YAMLs by
   copy-pasting one `uav-nav sweep ...` line.
 
 External backends (AirSim / PX4 / ROS 2) ship as lazy-import stubs —
 swap them in by registering a real `SimInterface` subclass without
 changing the rest of the stack.
+
+## Roadmap
+
+- 3D Pareto + perception-latency re-validation in `voxel_world`.
+- Wind / disturbance model in `dummy_*` simulators.
+- Sampling-based planner backends (RRT* / CHOMP) on the same ablation harness.
+- Real-backend drivers (one of AirSim / PX4-SITL / ROS 2 Gazebo) wired
+  through the `SimInterface` ABC.
 
 ## License
 
