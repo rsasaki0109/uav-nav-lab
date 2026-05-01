@@ -1,0 +1,62 @@
+# AirSim bridge — runs the framework's experiment runner against a real
+# AirSim server (Microsoft AirSim / Colosseum). Not exercised in CI.
+#
+# Setup:
+#   pip install airsim                                    # client lib
+#   ./AirSim/Blocks/LinuxNoEditor/Blocks.sh -windowed     # or any AirSim env
+#
+# Run:
+#   uav-nav run examples/exp_airsim.yaml
+#
+# Notes:
+#  - The scenario block stays the same as the 2D dummy world; the planner
+#    sees its occupancy as the source of truth, while AirSim provides the
+#    physical ego state and collision flag.
+#  - The bridge converts ENU (framework) ↔ NED (AirSim) on every step.
+#  - simPause + simContinueForTime is used to fast-forward AirSim per
+#    `dt`, decoupling the runner's loop from real-time wall clock.
+name: airsim_baseline
+seed: 42
+num_episodes: 3
+
+scenario:
+  type: grid_world
+  size: [50, 50]
+  start: [2.0, 2.0]
+  goal: [40.0, 40.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 30
+    seed: 7
+
+simulator:
+  type: airsim
+  host: 127.0.0.1
+  port: 41451
+  vehicle: Drone1
+  dt: 0.05
+  max_steps: 1500
+  goal_radius: 1.5
+
+planner:
+  type: mpc
+  max_speed: 8.0
+  replan_period: 0.2
+  horizon: 20
+  dt_plan: 0.05
+  n_samples: 16
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  safety_margin: 0.5
+  use_prediction: true
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/airsim_baseline

@@ -128,6 +128,92 @@ def test_3d_mpc_runs(tmp_path: Path) -> None:
     assert summary["n_episodes"] == 1
 
 
+def test_airsim_bridge_step_round_trips_enu_via_mock_client() -> None:
+    """Verify the AirSim bridge's ENU/NED conversions and step plumbing
+    against an injected mock client — no AirSim install required."""
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+    from uav_nav_lab.sim.airsim_bridge import AirSimBridge, _enu_to_ned, _ned_to_enu
+
+    # Mathematical sanity on the conversion helpers.
+    assert np.allclose(_enu_to_ned(np.array([1.0, 2.0, 3.0])), np.array([2.0, 1.0, -3.0]))
+    assert np.allclose(_ned_to_enu(np.array([2.0, 1.0, -3.0])), np.array([1.0, 2.0, 3.0]))
+
+    grid_cls = SCENARIO_REGISTRY.get("grid_world")
+    sc = grid_cls.from_config(
+        {"size": [10, 10], "start": [1.0, 1.0], "goal": [9.0, 9.0], "obstacles": {"type": "none"}}
+    )
+
+    class FakeKin:
+        # NED kinematics: drone is at NED (4, 3, -1) → ENU (3, 4, 1).
+        class _V:
+            x_val = 4.0
+            y_val = 3.0
+            z_val = -1.0
+        position = _V()
+        linear_velocity = _V()
+
+    class FakeState:
+        kinematics_estimated = FakeKin()
+
+    class FakeCollision:
+        has_collided = False
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.commands = []  # capture moveByVelocityAsync args
+
+        def confirmConnection(self) -> None:
+            pass
+
+        def enableApiControl(self, _on: bool, _vehicle: str) -> None:
+            pass
+
+        def armDisarm(self, _on: bool, _vehicle: str) -> None:
+            pass
+
+        def reset(self) -> None:
+            pass
+
+        def simSetVehiclePose(self, *_args, **_kwargs) -> None:  # noqa: D401
+            pass
+
+        def simPause(self, _on: bool) -> None:
+            pass
+
+        def simContinueForTime(self, _dt: float) -> None:
+            pass
+
+        def moveByVelocityAsync(self, vx, vy, vz, dt, vehicle_name=None):
+            self.commands.append((vx, vy, vz, dt, vehicle_name))
+
+            class _Future:
+                def join(self) -> None:
+                    pass
+
+            return _Future()
+
+        def getMultirotorState(self, vehicle_name=None):  # noqa: ARG002
+            return FakeState()
+
+        def simGetCollisionInfo(self, vehicle_name=None):  # noqa: ARG002
+            return FakeCollision()
+
+    fake = FakeClient()
+    bridge = AirSimBridge(dt=0.05, scenario=sc, client=fake)
+    state = bridge.reset()
+    assert state.position.shape[0] == 2
+
+    # ENU velocity (1, 2) → NED (2, 1, 0). 2D scenario pads vz=0.
+    out_state, info = bridge.step(np.array([1.0, 2.0]))
+    last = fake.commands[-1]
+    assert last[0] == 2.0  # NED x = ENU y
+    assert last[1] == 1.0  # NED y = ENU x
+    assert last[2] == 0.0  # 2D scenario → vz = 0
+    # Returned state in ENU (3, 4) [from FakeKin (4, 3, -1) NED].
+    assert np.allclose(out_state.position, np.array([3.0, 4.0]))
+    assert info.collision is False
+
+
 def test_rrt_star_returns_shorter_path_than_rrt_on_open_world() -> None:
     """RRT* rewiring should produce a path no longer than plain RRT on
     average. We compare on a wide-open world where rewiring has clear

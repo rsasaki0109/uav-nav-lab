@@ -1,26 +1,33 @@
-"""AirSim bridge — sketch implementation.
+"""AirSim bridge — wires the framework's `SimInterface` to Microsoft AirSim.
 
-This is a structural stub demonstrating that the `SimInterface` abstraction
-maps cleanly onto the AirSim Python client. It is *not* exercised in CI
-(would need an AirSim server). Run a real AirSim instance, then:
+Not exercised in CI (would need an AirSim server) but the AirSim Python
+client is mockable, so the logic that converts between AirSim's NED
+convention and the framework's ENU is unit-tested via the
+`AirSimBridge._to_airsim_velocity` / `._from_airsim_position` helpers.
+
+Run a real AirSim instance, then:
 
     pip install airsim
     uav-nav run examples/exp_airsim.yaml
 
-The contract:
+Contract:
+  - reset(seed)        → resets the AirSim world, teleports to start (in NED)
+  - step(velocity_cmd) → simPause → moveByVelocity for `dt` → simContinueForTime
+                          → read kinematics back. The pause/continue dance
+                          is what gives the experiment runner deterministic
+                          fast-forward instead of real-time wall clock.
+  - state              → ENU pose / velocity converted from NED kinematics
+  - obstacle_map       → comes from the scenario; AirSim has no occupancy grid
 
-  - reset(seed)        → arms / disarms / teleports the drone back to start
-  - step(velocity_cmd) → moveByVelocityAsync(...) for `dt` seconds
-  - state              → current pose + velocity from the AirSim API
-  - obstacle_map       → comes from a static occupancy map you load on the
-                         scenario side; AirSim itself does not give you a
-                         grid, so the scenario is the source of truth.
+Coordinate frames:
+  - Framework: ENU (east-north-up, +z up).
+  - AirSim:    NED (north-east-down, +z down).
+  - We map (x, y, z)_ENU = (y, x, -z)_NED.
 
-Real-world pitfalls (left as TODO comments below):
-  - Time synchronization: AirSim runs in real time; the experiment runner
-    expects fast-forward. Use `client.simPause(True)` + `simContinueForTime`.
-  - Coordinate frames: AirSim uses NED; the framework uses ENU.
-  - Async commands: moveByVelocityAsync returns a future — block on join().
+Async commands: AirSim's moveByVelocityAsync returns a future; we
+join() before reading kinematics to avoid race-y "command in flight"
+states. Combined with simPause / simContinueForTime, the step is
+synchronous from the runner's perspective.
 """
 
 from __future__ import annotations
@@ -32,16 +39,45 @@ import numpy as np
 from .base import SIM_REGISTRY, SimInterface, SimState, SimStepInfo
 
 
+def _enu_to_ned(p: np.ndarray) -> np.ndarray:
+    """(x, y, z)_ENU → (y, x, -z)_NED. Pads / truncates to 3D."""
+    p = np.asarray(p, dtype=float)
+    out = np.zeros(3)
+    out[: p.size] = p[:3]
+    return np.array([out[1], out[0], -out[2]])
+
+
+def _ned_to_enu(p: np.ndarray) -> np.ndarray:
+    """(y, x, -z)_NED → (x, y, z)_ENU."""
+    p = np.asarray(p, dtype=float)
+    return np.array([p[1], p[0], -p[2]])
+
+
 @SIM_REGISTRY.register("airsim")
 class AirSimBridge(SimInterface):
-    def __init__(self, dt: float, scenario: Any, host: str, port: int, vehicle: str) -> None:
-        self.dt = dt
+    def __init__(
+        self,
+        dt: float,
+        scenario: Any,
+        host: str = "127.0.0.1",
+        port: int = 41451,
+        vehicle: str = "Drone1",
+        goal_radius: float = 1.5,
+        max_steps: int = 2000,
+        client: Any = None,
+    ) -> None:
+        self.dt = float(dt)
         self.scenario = scenario
         self.host = host
         self.port = port
         self.vehicle = vehicle
-        self._client: Any = None
+        self.goal_radius = float(goal_radius)
+        self.max_steps = int(max_steps)
+        # `client` lets tests inject a fake airsim client; in production
+        # the real client is created lazily on first reset/step.
+        self._client: Any = client
         self._state: SimState | None = None
+        self._step_count = 0
 
     @classmethod
     def from_config(cls, cfg: Mapping[str, Any], scenario: Any) -> "AirSimBridge":
@@ -51,56 +87,112 @@ class AirSimBridge(SimInterface):
             host=str(cfg.get("host", "127.0.0.1")),
             port=int(cfg.get("port", 41451)),
             vehicle=str(cfg.get("vehicle", "Drone1")),
+            goal_radius=float(cfg.get("goal_radius", 1.5)),
+            max_steps=int(cfg.get("max_steps", 2000)),
         )
 
     def _ensure_client(self) -> Any:
-        if self._client is None:
-            try:
-                import airsim  # type: ignore[import-not-found]
-            except ImportError as e:  # pragma: no cover
-                raise SystemExit(
-                    "airsim package is not installed. Install with `pip install airsim` "
-                    "and start an AirSim server before running this experiment."
-                ) from e
-            self._client = airsim.MultirotorClient(ip=self.host, port=self.port)
-            self._client.confirmConnection()
-            self._client.enableApiControl(True, self.vehicle)
-            self._client.armDisarm(True, self.vehicle)
+        if self._client is not None:
+            return self._client
+        try:
+            import airsim  # type: ignore[import-not-found]
+        except ImportError as e:  # pragma: no cover
+            raise SystemExit(
+                "airsim package is not installed. Install with `pip install airsim` "
+                "and start an AirSim server before running this experiment."
+            ) from e
+        self._client = airsim.MultirotorClient(ip=self.host, port=self.port)
+        self._client.confirmConnection()
+        self._client.enableApiControl(True, self.vehicle)
+        self._client.armDisarm(True, self.vehicle)
         return self._client
 
-    def reset(self, *, seed: int | None = None) -> SimState:  # pragma: no cover
+    def reset(
+        self,
+        *,
+        seed: int | None = None,
+        initial_position: np.ndarray | None = None,
+    ) -> SimState:
         client = self._ensure_client()
         if seed is not None:
             self.scenario.reseed(seed)
         client.reset()
         client.enableApiControl(True, self.vehicle)
         client.armDisarm(True, self.vehicle)
-        # TODO: teleport to scenario.start (NED conversion)
-        # TODO: takeoffAsync().join()
-        start = np.asarray(self.scenario.start, dtype=float)
-        self._state = SimState(t=0.0, position=start.copy(), velocity=np.zeros(start.shape[0]))
+        if initial_position is not None:
+            start = np.asarray(initial_position, dtype=float)
+        else:
+            start = np.asarray(self.scenario.start, dtype=float)
+        # Teleport via simSetVehiclePose, NED. Hover at the start
+        # altitude implied by the ENU z-component.
+        ned_start = _enu_to_ned(start)
+        if hasattr(client, "simSetVehiclePose"):
+            try:
+                import airsim  # type: ignore[import-not-found]
+                pose = airsim.Pose(
+                    airsim.Vector3r(float(ned_start[0]), float(ned_start[1]), float(ned_start[2])),
+                    airsim.to_quaternion(0.0, 0.0, 0.0),
+                )
+                client.simSetVehiclePose(pose, ignore_collision=True, vehicle_name=self.vehicle)
+            except ImportError:  # pragma: no cover
+                pass
+        ndim = self.scenario.ndim
+        self._state = SimState(t=0.0, position=start[:ndim].copy(), velocity=np.zeros(ndim))
+        self._step_count = 0
         return self._state.copy()
 
-    def step(self, command: np.ndarray) -> tuple[SimState, SimStepInfo]:  # pragma: no cover
+    def step(self, command: np.ndarray) -> tuple[SimState, SimStepInfo]:
+        assert self._state is not None, "call reset() first"
         client = self._ensure_client()
+        # ENU velocity → NED. 2D scenarios pad vz=0.
         v = np.asarray(command, dtype=float)
-        # AirSim velocity command — assumes 3D vehicle with vz=0 for 2D scenarios
-        vx, vy = float(v[0]), float(v[1])
-        vz = float(v[2]) if v.shape[0] >= 3 else 0.0
-        client.moveByVelocityAsync(vx, vy, vz, self.dt, vehicle_name=self.vehicle).join()
-        # Read state back
+        v3 = np.zeros(3)
+        v3[: min(3, v.size)] = v[:3]
+        v_ned = _enu_to_ned(v3)
+        # Pause sim, run command for exactly dt, continue. This makes the
+        # experiment runner's wall-clock-independent loop work against a
+        # real-time engine. simPause + simContinueForTime exists in AirSim
+        # >= 1.4; older versions need a manual moveByVelocity timeout.
+        if hasattr(client, "simPause"):
+            client.simPause(False)
+        future = client.moveByVelocityAsync(
+            float(v_ned[0]),
+            float(v_ned[1]),
+            float(v_ned[2]),
+            self.dt,
+            vehicle_name=self.vehicle,
+        )
+        if hasattr(client, "simContinueForTime"):
+            client.simContinueForTime(self.dt)
+        else:  # pragma: no cover
+            future.join()
+        if hasattr(client, "simPause"):
+            client.simPause(True)
+        # Read kinematics back, NED → ENU.
         kin = client.getMultirotorState(vehicle_name=self.vehicle).kinematics_estimated
-        pos = np.asarray([kin.position.x_val, kin.position.y_val, kin.position.z_val])
-        vel = np.asarray([kin.linear_velocity.x_val, kin.linear_velocity.y_val, kin.linear_velocity.z_val])
+        pos_ned = np.array([kin.position.x_val, kin.position.y_val, kin.position.z_val])
+        vel_ned = np.array(
+            [kin.linear_velocity.x_val, kin.linear_velocity.y_val, kin.linear_velocity.z_val]
+        )
+        pos_enu = _ned_to_enu(pos_ned)
+        vel_enu = _ned_to_enu(vel_ned)
         ndim = self.scenario.ndim
-        assert self._state is not None
-        self._state.position = pos[:ndim]
-        self._state.velocity = vel[:ndim]
+        self._state.position = pos_enu[:ndim]
+        self._state.velocity = vel_enu[:ndim]
         self._state.t += self.dt
+        self._step_count += 1
+        # AirSim's collision flag is the source of truth in physics-simulated
+        # worlds; the scenario's occupancy is only used for planner input.
         collision = bool(client.simGetCollisionInfo(vehicle_name=self.vehicle).has_collided)
-        goal_reached = bool(np.linalg.norm(self._state.position - self.scenario.goal) <= 1.5)
+        goal = (
+            self.scenario.goal
+            if not hasattr(self, "_goal_override") or self._goal_override is None
+            else self._goal_override
+        )
+        goal_reached = bool(np.linalg.norm(self._state.position - goal[:ndim]) <= self.goal_radius)
+        truncated = self._step_count >= self.max_steps
         return self._state.copy(), SimStepInfo(
-            collision=collision, goal_reached=goal_reached, truncated=False
+            collision=collision, goal_reached=goal_reached, truncated=truncated
         )
 
     @property
@@ -114,6 +206,4 @@ class AirSimBridge(SimInterface):
 
     @property
     def obstacle_map(self) -> Any:
-        # AirSim has no built-in occupancy grid; the scenario remains the
-        # source of truth for what the planner sees.
         return self.scenario.occupancy

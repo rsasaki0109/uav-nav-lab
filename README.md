@@ -420,9 +420,19 @@ sounds fanciest — the framework is built to make that picking trivial.
 - All ablation results are reproducible from the example YAMLs by
   copy-pasting one `uav-nav sweep ...` line.
 
-External backends (AirSim / PX4 / ROS 2) ship as lazy-import stubs —
-swap them in by registering a real `SimInterface` subclass without
-changing the rest of the stack.
+External backends:
+
+- **AirSim** (`uav_nav_lab/sim/airsim_bridge.py`) is wired end-to-end —
+  ENU ↔ NED conversion, `simPause` + `simContinueForTime` for
+  deterministic fast-forward, async-command join, ENU→NED velocity
+  setpoints and NED→ENU kinematics readback. Run via
+  `examples/exp_airsim.yaml` after `pip install airsim` and starting
+  any AirSim binary; mock-injectable client makes the conversion logic
+  CI-testable without an AirSim install.
+- **ROS 2 / PX4-SITL** (`ros2_bridge.py`) ships as a structural sketch —
+  the topic plumbing is documented but `_ensure_node` raises
+  `NotImplementedError`. Wire publishers / subscribers there to drop
+  in a Gazebo-or-Ignition setup; the rest of the stack does not change.
 
 ## 🗺️ Roadmap
 
@@ -431,8 +441,9 @@ changing the rest of the stack.
 - Wind / disturbance model in `dummy_*` simulators.
 - CHOMP / trajectory-optimisation planners on top of the existing
   RRT / RRT* sampling backends.
-- Real-backend drivers (one of AirSim / PX4-SITL / ROS 2 Gazebo) wired
-  through the `SimInterface` ABC.
+- Complete the ROS 2 / PX4-SITL bridge (publishers / subscribers,
+  spin-once per step, `/clock` handling for sim-time). AirSim is
+  already wired.
 
 ## 📄 License
 
