@@ -1,0 +1,72 @@
+# 3D analogue of exp_predictive.yaml — voxel_world with three bouncing
+# dynamic obstacles + perfect sensor + Pareto MPC. Validates whether the
+# 2D Pareto / cliff findings transfer to 3D.
+#
+# (Pareto sweep result table will be appended after the first full run;
+# defaults below assume the 2D-Pareto starting point with 3D-suitable
+# n_samples=8 — Fibonacci-sphere sampling needs fewer per-step directions
+# than the 2D circle case to cover the escape space.)
+#
+# Reproduce with:
+#   uav-nav sweep examples/exp_3d_predictive.yaml \
+#     --param planner.n_samples=8,16,32,64,128 \
+#     --param planner.horizon=20,40,60,80,120 \
+#     --param num_episodes=8 -j 4
+#
+name: predictive_mpc_3d
+seed: 42
+num_episodes: 5
+
+scenario:
+  type: voxel_world
+  size: [40, 40, 12]
+  start: [2.0, 2.0, 6.0]
+  goal: [37.0, 37.0, 6.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 60
+    seed: 7
+  dynamic_obstacles:
+    - start: [20.0, 8.0, 6.0]
+      velocity: [0.0, 5.0, 0.5]    # crosses the diagonal corridor + small vertical drift
+      reflect: true
+      radius: 0.8
+    - start: [8.0, 25.0, 5.0]
+      velocity: [4.0, 0.0, -0.4]
+      reflect: true
+      radius: 0.8
+    - start: [28.0, 20.0, 7.0]
+      velocity: [-3.0, 2.0, 0.3]
+      reflect: true
+      radius: 0.8
+
+simulator:
+  type: dummy_3d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: mpc
+  max_speed: 8.0
+  replan_period: 0.2
+  horizon: 40
+  dt_plan: 0.05
+  n_samples: 8           # Pareto-optimal in 3D
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  safety_margin: 0.5
+  use_prediction: true
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/predictive_mpc_3d

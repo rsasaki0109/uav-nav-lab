@@ -128,6 +128,34 @@ def test_3d_mpc_runs(tmp_path: Path) -> None:
     assert summary["n_episodes"] == 1
 
 
+def test_voxel_world_dynamic_obstacles_advance_and_collide() -> None:
+    """voxel_world should support dynamic obstacles symmetrically with grid_world."""
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+
+    voxel_cls = SCENARIO_REGISTRY.get("voxel_world")
+    sc = voxel_cls.from_config(
+        {
+            "size": [20, 20, 10],
+            "start": [2.0, 2.0, 5.0],
+            "goal": [17.0, 17.0, 5.0],
+            "resolution": 1.0,
+            "obstacles": {"type": "none"},
+            "dynamic_obstacles": [
+                {"start": [10.0, 10.0, 5.0], "velocity": [1.0, 0.0, 0.0], "radius": 0.5},
+            ],
+        }
+    )
+    # property reflects current state
+    assert len(sc.dynamic_obstacles) == 1
+    assert sc.dynamic_obstacles[0]["position"][0] == pytest.approx(10.0)
+    # advance moves the obstacle linearly
+    sc.advance(1.0)
+    assert sc.dynamic_obstacles[0]["position"][0] == pytest.approx(11.0)
+    # collision check uses sphere-sphere distance against true position
+    assert sc.is_collision(np.array([11.0, 10.0, 5.0]), radius=0.4)
+    assert not sc.is_collision(np.array([15.0, 15.0, 5.0]), radius=0.4)
+
+
 def test_lidar_dynamics_filtered_by_range() -> None:
     from uav_nav_lab.sensor import SENSOR_REGISTRY
 
