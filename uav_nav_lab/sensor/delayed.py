@@ -32,15 +32,21 @@ class DelayedSensor(SensorModel):
         dt: float = 0.05,
         noise_std: float = 0.0,
         extrapolate: bool = False,
+        velocity_window: int = 1,
     ) -> None:
         self.delay = float(delay)
         self.dt = float(dt)
         self.noise_std = float(noise_std)
         self.extrapolate = bool(extrapolate)
+        # When >1, averages the finite-difference velocity over the last
+        # `velocity_window` consecutive sample pairs to reduce acceleration
+        # noise. Lengthens the velocity estimate's effective lag.
+        self.velocity_window = max(1, int(velocity_window))
         self._buffer_len = max(1, int(round(self.delay / self.dt)))
-        # Need one extra slot when extrapolating so we can finite-difference
-        # the two oldest samples to recover the stale velocity.
-        buf_size = self._buffer_len + (1 if self.extrapolate else 0)
+        # Need extra slots when extrapolating: one to compute the basic FD
+        # velocity, plus `velocity_window-1` more to average over a window.
+        extra = (self.velocity_window if self.extrapolate else 0)
+        buf_size = self._buffer_len + extra
         self._buffer: deque[np.ndarray] = deque(maxlen=buf_size)
         self._rng = np.random.default_rng()
 
@@ -51,22 +57,29 @@ class DelayedSensor(SensorModel):
             dt=float(cfg.get("dt", 0.05)),
             noise_std=float(cfg.get("position_noise_std", 0.0)),
             extrapolate=bool(cfg.get("extrapolate", False)),
+            velocity_window=int(cfg.get("velocity_window", 1)),
         )
 
     def reset(self, *, seed: int | None = None) -> None:
         if seed is not None:
             self._rng = np.random.default_rng(seed)
-        buf_size = self._buffer_len + (1 if self.extrapolate else 0)
-        self._buffer = deque(maxlen=buf_size)
+        extra = (self.velocity_window if self.extrapolate else 0)
+        self._buffer = deque(maxlen=self._buffer_len + extra)
 
     def observe(self, t: float, true_position: np.ndarray) -> np.ndarray:
         true_position = np.asarray(true_position, dtype=float).copy()
         self._buffer.append(true_position)
         if self.extrapolate and len(self._buffer) >= 2:
-            # finite-difference the two oldest samples to recover stale
-            # velocity, then project the stale position forward by `delay`.
+            # Average the finite-differenced velocity over up to
+            # `velocity_window` consecutive sample pairs from the start of
+            # the buffer to suppress acceleration noise. With window=1 this
+            # reduces to the simple two-sample FD used previously.
+            n_pairs = min(self.velocity_window, len(self._buffer) - 1)
             stale_pos = self._buffer[0]
-            stale_vel = (self._buffer[1] - self._buffer[0]) / self.dt
+            v_acc = np.zeros_like(stale_pos)
+            for i in range(n_pairs):
+                v_acc = v_acc + (self._buffer[i + 1] - self._buffer[i])
+            stale_vel = v_acc / (n_pairs * self.dt)
             obs = stale_pos + stale_vel * self.delay
         else:
             obs = self._buffer[0].copy()  # leftmost is the oldest known sample

@@ -472,6 +472,41 @@ def test_kalman_track_associates_across_calls() -> None:
     assert len(p._tracks) == 1, "track was duplicated on each call"
 
 
+def test_delayed_sensor_velocity_window_smooths_noisy_position() -> None:
+    """A larger velocity_window should reduce the variance of the
+    extrapolated estimate when position observations are noisy."""
+    import numpy as np
+
+    from uav_nav_lab.sensor import SENSOR_REGISTRY
+
+    cls = SENSOR_REGISTRY.get("delayed")
+    rng = np.random.default_rng(0)
+    truth_v = np.array([2.0, 0.0])
+
+    def run(window: int) -> float:
+        sensor = cls.from_config({
+            "delay": 0.2, "dt": 0.05, "extrapolate": True,
+            "position_noise_std": 0.0, "velocity_window": window,
+        })
+        sensor.reset(seed=42)
+        pos = np.zeros(2)
+        outs = []
+        for k in range(40):
+            # noisy true position (sim of imperfect localization input)
+            noisy_pos = pos + rng.normal(0.0, 0.05, size=2)
+            outs.append(sensor.observe(k * 0.05, noisy_pos))
+            pos = pos + truth_v * 0.05
+        # measure variance of the estimate's deviation from truth
+        outs = np.asarray(outs[10:])  # let buffer fill
+        true_traj = np.stack([truth_v * (k * 0.05) for k in range(10, 40)])
+        return float(np.std(outs - true_traj))
+
+    err_w1 = run(window=1)
+    err_w5 = run(window=5)
+    # window=5 should produce a noticeably smaller error stdev than window=1
+    assert err_w5 < err_w1, f"window=5 ({err_w5:.3f}) did not improve over window=1 ({err_w1:.3f})"
+
+
 def test_delayed_sensor_extrapolate_recovers_current_pose() -> None:
     """With `extrapolate=True`, a stale measurement should be projected
     forward by `delay`, recovering close to the true current pose for a
