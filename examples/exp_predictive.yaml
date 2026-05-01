@@ -26,6 +26,35 @@
 #     --param planner.replan_period=0.1,0.2,0.5,1.0,2.0 \
 #     --param num_episodes=20 -j 4
 #   uav-nav viz <out>     # renders the 2D heatmap
+#
+# 2D Pareto: n_samples × horizon (n=20, success rate %):
+#
+#     n_samp\horizon    20    40    60    80   120
+#              8       100    90    80    65    45
+#             16       100    85    80    65    35
+#             32       100    95    75    60    35  ← current default
+#             64       100   100    75    60    45
+#            128       100   100    95    80    40
+#
+# planner_dt mean (ms):
+#     n_samp\horizon    20    40    60    80   120
+#              8        55    53    60    64    73
+#             16        51    61    68    76    95
+#             32        58    74    98   126   162
+#             64        82   124   192   220   313
+#            128       147   217   306   385   560
+#
+# Sole Pareto-optimal point: n_samples=16, horizon=20 → 100% / 51 ms.
+# Dominates the existing default (32 / 60 → 75% / 98 ms): higher
+# success at half the compute. Counterintuitive horizon trend — longer
+# rollouts here *hurt* success because the reach-goal bonus fires less
+# often when the rollout overshoots the goal radius mid-trajectory.
+#
+# Reproduce with:
+#   uav-nav sweep examples/exp_predictive.yaml \
+#     --param planner.n_samples=8,16,32,64,128 \
+#     --param planner.horizon=20,40,60,80,120 \
+#     --param num_episodes=20 -j 4
 name: predictive_mpc
 seed: 42
 num_episodes: 5
