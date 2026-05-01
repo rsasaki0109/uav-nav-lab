@@ -10,7 +10,8 @@
 #
 #   planner    succ%   ±     coll%   ±     plan_ms mean / p95
 #   straight     0.0   5.7   100.0   5.7    0.04 /  0.05    ← baseline floor
-#   astar       20.0  13.9    80.0  13.9    4.75 /  8.97    ← snapshot-only
+#   astar       20.0  13.9    80.0  13.9    4.75 /  8.97    ← snapshot-only grid
+#   rrt         73.3  15.1    26.7  15.1   29.99 / 64.27    ← snapshot-only continuous
 #   mpc        100.0   5.7     0.0   5.7   52.16 / 56.96    ← Pareto config
 #
 # Findings:
@@ -18,24 +19,32 @@
 #    episode**. Its constant-velocity peer prediction lets it route around
 #    the bouncing obstacles' *future* positions, while A* sees only a
 #    snapshot at replan time and walks into where they'll be 0.2 s later.
-#  - A* at 20 % vs MPC at 100 % isolates the value of motion prediction:
-#    same world, same dynamics, only the planner's view of "where will
-#    the obstacles be?" differs. The +80 pp gap is the experimentally-
-#    measured value of the prediction model in this scenario.
-#  - Straight-line floors at 0 % — the dynamic obstacles cross the diagonal
-#    corridor on a schedule that always intersects naive bee-line travel
-#    over 30 episodes. Useful sanity floor.
+#  - **RRT (continuous-space sampling) beats grid A* by +53 pp** at
+#    similar plan_dt order of magnitude. Both planners are snapshot-only
+#    (no motion prediction), so the gap is entirely about path geometry:
+#    RRT's continuous edges traverse open space in straight lines,
+#    arriving past obstacle crossings before they happen. A*'s
+#    8-connected grid path zigzags, sitting in obstacle paths longer.
+#  - The full ladder reads as:
+#      no reasoning   < grid reasoning < continuous reasoning < model-based
+#       (straight 0%)  (astar 20%)      (rrt 73%)              (mpc 100%)
+#  - A* at 20 % vs MPC at 100 % isolates the value of motion prediction
+#    plus continuous-space planning combined; A* vs RRT (20 → 73 %)
+#    isolates continuous-space planning alone; RRT vs MPC (73 → 100 %)
+#    isolates motion prediction at fixed-search-strategy.
 #  - Compute cost: MPC is ~11× per-replan over A* (52 ms vs 4.8 ms) and
-#    ~1300× over straight-line. With ~5 Hz replanning that's a real
-#    budget — for an embedded payload with sub-ms requirements, A*'s
-#    20 % may still beat MPC's 100 % at higher speeds where MPC's 56 ms
-#    p95 stops fitting in the replan period.
+#    ~1300× over straight-line; RRT sits between (30 ms mean, 64 ms p95).
+#    With ~5 Hz replanning that's a real budget — for an embedded payload
+#    with sub-ms requirements, A*'s 20 % may still beat MPC's 100 % at
+#    higher speeds where MPC's 56 ms p95 stops fitting in the replan
+#    period.
 #
 # Reproduce with:
 #   uav-nav run examples/exp_compare_astar.yaml
 #   uav-nav run examples/exp_compare_straight.yaml
+#   uav-nav run examples/exp_compare_rrt.yaml
 #   uav-nav run examples/exp_compare_mpc.yaml
-#   uav-nav compare results/cmp_astar results/cmp_straight results/cmp_mpc
+#   uav-nav compare results/cmp_straight results/cmp_astar results/cmp_rrt results/cmp_mpc
 name: cmp_astar
 seed: 42
 num_episodes: 30

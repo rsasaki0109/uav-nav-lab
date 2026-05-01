@@ -128,6 +128,31 @@ def test_3d_mpc_runs(tmp_path: Path) -> None:
     assert summary["n_episodes"] == 1
 
 
+def test_rrt_planner_finds_path_around_a_wall() -> None:
+    """RRT should find *some* path around a wall and reach goal_tolerance."""
+    from uav_nav_lab.planner import PLANNER_REGISTRY
+
+    rrt_cls = PLANNER_REGISTRY.get("rrt")
+    rrt = rrt_cls.from_config(
+        {
+            "max_speed": 10.0,
+            "step_size": 2.0,
+            "goal_tolerance": 1.5,
+            "max_samples": 1000,
+            "goal_bias": 0.2,
+            "seed": 42,
+        }
+    )
+    occ = np.zeros((20, 20), dtype=bool)
+    occ[10, 5:15] = True  # wall down the middle with two openings
+    plan = rrt.plan(np.array([2.0, 10.0]), np.array([18.0, 10.0]), occ)
+    assert plan.meta["status"] == "ok"
+    assert plan.waypoints.shape[0] >= 2
+    # last waypoint must land within goal_tolerance of the goal
+    last = plan.waypoints[-1]
+    assert float(np.linalg.norm(last - np.array([18.0, 10.0]))) <= 1.5
+
+
 def test_voxel_world_dynamic_obstacles_advance_and_collide() -> None:
     """voxel_world should support dynamic obstacles symmetrically with grid_world."""
     from uav_nav_lab.scenario import SCENARIO_REGISTRY
