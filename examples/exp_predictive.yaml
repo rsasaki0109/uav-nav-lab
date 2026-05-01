@@ -249,6 +249,53 @@
 #     --param planner.predictor.type=kalman_velocity \
 #     --param planner.predictor.delay_compensation=0.0,0.25,0.5,0.75 \
 #     --param num_episodes=30 -j 4
+#
+# Systemic fix attempt: ego-pose forward extrapolation in the
+# delayed sensor. With `sensor.extrapolate=true` the sensor projects
+# its stale measurement to "now" using a finite-differenced velocity
+# (a CV-style onboard estimator). delay × speed heatmap, n=20:
+#
+#   delay\speed    10    15    20    25    30
+#     0.00         95    80    45    35    40   ← worse than no-extrap
+#     0.05        100    90    75    55    45   ← Δ=0
+#     0.10        100    80    70    50    55   ← Δ=+0..25 pp
+#     0.20         95    75    80    55    40   ← Δ=+35 pp at 20 m/s
+#     0.50         60    35    40    15     5   ← cliff partially lifted
+#
+# Honest assessment: partial systemic fix, *not* a silver bullet.
+#  - Helps at moderate delay × speed (delay=0.1–0.2 s @ speed=20-30:
+#    Δ=+15..35 pp). The runner finally sees a fresh ego pose.
+#  - At delay=0 it actively *hurts* (Δ=-5..-30 pp). Buffer length is
+#    pinned to ≥1 control step, so even at delay=0 extrap propagates
+#    a 1-step-stale measurement forward — introducing a small lag
+#    artifact where the no-extrap path would just return the current
+#    pose verbatim.
+#  - At delay=0.5 × speed=10/20 the cliff lifts (60% / 40% vs prior
+#    25% / 10%, Δ=+30..35 pp). At delay=0.5 × speed=25/30 it goes
+#    *down* (-5 / -15 pp). The 0.05 s finite-difference becomes
+#    velocity-noisy when the drone is accelerating; CV extrapolation
+#    overshoots and sends the estimated pose past truth.
+#  - At the headline persistent cliff (delay=0.5, speed=15, n=30):
+#    26.7% → 33.3% (+6.6 pp, CIs overlap). Not statistically
+#    significant on its own — the Δ=+30 pp gains live at slightly
+#    different cells.
+#
+# Engineering takeaway: simple CV-style ego extrapolation closes
+# part of the gap that the prior "Predictor + delay_compensation"
+# experiment showed could not be closed by predictor tricks alone.
+# Closing the rest requires multi-sample velocity smoothing
+# (Kalman or moving-average over a longer window) so the velocity
+# estimate is less noisy under acceleration. That's the natural
+# next predictor / sensor experiment.
+#
+# Reproduce with:
+#   uav-nav sweep examples/exp_predictive.yaml \
+#     --param planner.horizon=20 --param planner.n_samples=16 \
+#     --param sensor.type=delayed \
+#     --param sensor.delay=0.0,0.05,0.1,0.2,0.5 \
+#     --param sensor.extrapolate=true \
+#     --param planner.max_speed=10,15,20,25,30 \
+#     --param num_episodes=20 -j 4
 name: predictive_mpc
 seed: 42
 num_episodes: 5

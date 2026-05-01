@@ -472,6 +472,28 @@ def test_kalman_track_associates_across_calls() -> None:
     assert len(p._tracks) == 1, "track was duplicated on each call"
 
 
+def test_delayed_sensor_extrapolate_recovers_current_pose() -> None:
+    """With `extrapolate=True`, a stale measurement should be projected
+    forward by `delay`, recovering close to the true current pose for a
+    constant-velocity target."""
+    import numpy as np
+
+    from uav_nav_lab.sensor import SENSOR_REGISTRY
+
+    cls = SENSOR_REGISTRY.get("delayed")
+    sensor = cls.from_config({"delay": 0.1, "dt": 0.05, "extrapolate": True})
+    sensor.reset()
+    # constant-velocity true motion: pos = [t, 0]; v=(1,0)
+    pos = np.zeros(2)
+    last_obs = None
+    for k in range(10):
+        last_obs = sensor.observe(k * 0.05, pos)
+        pos = pos + np.array([1.0, 0.0]) * 0.05
+    # final true position is [10*0.05, 0] = [0.5, 0]
+    # extrapolated obs should be close to current truth (within numerical noise)
+    assert np.allclose(last_obs, [0.5, 0.0], atol=0.1)
+
+
 def test_kalman_delay_compensation_extrapolates_forward() -> None:
     """With delay_compensation set, the output should sit ahead of the
     raw rollout by delay_compensation × velocity."""
