@@ -55,6 +55,32 @@
 #     --param planner.n_samples=8,16,32,64,128 \
 #     --param planner.horizon=20,40,60,80,120 \
 #     --param num_episodes=20 -j 4
+#
+# 2D ablation: sensor.delay × max_speed with the delayed sensor swapped
+# in for the perfect one (n=20, success rate %):
+#
+#     delay\speed     10    15    20    25    30
+#       0.00 s       70    50    30     0     0
+#       0.05 s       70    50    30     0     0
+#       0.10 s       65    30    30     0     0
+#       0.20 s       55    15    25     0     0
+#       0.50 s       20    15    25     0     0
+#
+# Compare to the same sweep on exp_basic.yaml (A*, static obstacles)
+# which tolerated up to 0.2 s of delay cleanly: predictive MPC under
+# *dynamic* obstacles is much more delay-sensitive — at speed=15
+# success collapses from 50% → 15% just going from 0 → 0.2 s.
+# Stale ego-pose belief is fed to a constant-velocity peer-prediction,
+# so the predicted obstacle trajectory is wrong from a wrong starting
+# point; the safety margin cannot absorb a moving target the way it
+# absorbs a static one.
+#
+# Reproduce with:
+#   uav-nav sweep examples/exp_predictive.yaml \
+#     --param sensor.type=delayed \
+#     --param sensor.delay=0.0,0.05,0.1,0.2,0.5 \
+#     --param planner.max_speed=10,15,20,25,30 \
+#     --param num_episodes=20 -j 4
 name: predictive_mpc
 seed: 42
 num_episodes: 5
