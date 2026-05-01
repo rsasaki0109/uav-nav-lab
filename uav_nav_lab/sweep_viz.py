@@ -149,6 +149,18 @@ def sweep_viz(sweep_root: Path) -> Path:
     keys, runs = _load_sweep(sweep_root)
     if len(keys) == 0:
         raise ValueError(f"sweep at {sweep_root} has no overrides recorded")
+    # Drop axes that turn out to take a single value across the manifest —
+    # users routinely pass `--param x=fixed_value` alongside a real sweep,
+    # and a 1-value axis is not actually swept.
+    def _hashable(v: Any) -> Any:
+        return tuple(v) if isinstance(v, list) else v
+
+    keys = [k for k in keys if len({_hashable(r["params"][k]) for r in runs}) > 1]
+    if len(keys) == 0:
+        raise ValueError(
+            f"sweep at {sweep_root} has overrides but no axis varies — "
+            "all `--param` values were fixed."
+        )
     if len(keys) > 2:
         raise NotImplementedError(
             f"sweep viz only supports 1 or 2 swept params (got {len(keys)}: {keys}). "

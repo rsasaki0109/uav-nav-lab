@@ -13,9 +13,14 @@
 #     --param num_episodes=30 -j 2
 #
 # Other ablation knobs:
-#   --param planner.predictor.velocity_noise_std=0.0,1.0,2.0,4.0
-#       (after switching predictor.type=noisy_velocity) — peer-tracking
-#       quality vs. mid-air collision rate.
+#   --param planner.predictor.type=noisy_velocity
+#   --param planner.predictor.velocity_noise_std=0.0,0.5,1.0,2.0,4.0
+#       Peer-tracking quality vs. joint mid-air success (n=30):
+#         σ=0.0 → 86.7%   σ=2.0 → 83.3%
+#         σ=0.5 → 80.0%   σ=4.0 → 73.3%
+#         σ=1.0 → 76.7%
+#       Roughly monotonic decrease (-13pp from σ=0 to σ=4); CIs overlap
+#       at n=30 so individual pair comparisons are not yet significant.
 name: multi_drone_headon
 seed: 42
 num_episodes: 5
