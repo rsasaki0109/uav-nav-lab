@@ -10,6 +10,7 @@ every example YAML carries its own validated finding.**
 [![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/rsasaki0109/uav-nav-lab/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/rsasaki0109/uav-nav-lab)](https://github.com/rsasaki0109/uav-nav-lab/releases)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
+[![Stars](https://img.shields.io/github/stars/rsasaki0109/uav-nav-lab?style=social)](https://github.com/rsasaki0109/uav-nav-lab/stargazers)
 
 <img src="docs/images/demo_mpc.gif" alt="Pareto-MPC routing through bouncing dynamic obstacles" width="540">
 
@@ -252,6 +253,14 @@ trajectory and react, so the system as a whole degrades less than
 independent drones would.
 
 ### The perception-latency cliff: a four-step research saga
+
+<p align="center">
+<img src="docs/images/cliff_delay_speed.png" alt="6-panel sensor.delay × max_speed sweep showing success drop and planner-dt blow-up at high delay × high speed" width="640">
+</p>
+
+*sensor.delay × max_speed at the Pareto MPC config — success dives in
+the bottom-right corner (delay=0.5 s × speed≥20 m/s) while the rest of
+the grid is comfortably ≥ 80 %. That single corner is the cliff.*
 
 A single persistent `delay=0.5 s` × `speed=15 m/s` cell on the
 predictive-MPC scenario (≤ 25 % success regardless of `inflate` /
