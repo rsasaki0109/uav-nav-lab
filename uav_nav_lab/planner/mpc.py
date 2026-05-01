@@ -62,6 +62,13 @@ class SamplingMPCPlanner(Planner):
         self.w_smooth = float(w_smooth)
         self._predictor: Predictor = predictor if predictor is not None else build_predictor(None)
         self._prev_action: np.ndarray | None = None
+        # Per-episode caches: ctg / static-occ depend only on the static
+        # obstacle layout + goal cell, both of which are stable within an
+        # episode. The Dijkstra cost-to-go dominates 3D plan_dt, so caching
+        # it makes 3D sweeps tractable. Cleared by reset().
+        self._static_occ_inflated: np.ndarray | None = None
+        self._ctg_cache: np.ndarray | None = None
+        self._ctg_cache_goal: tuple[int, ...] | None = None
 
     @classmethod
     def from_config(cls, cfg: Mapping[str, Any]) -> "SamplingMPCPlanner":
@@ -85,11 +92,46 @@ class SamplingMPCPlanner(Planner):
     def reset(self) -> None:
         self._prev_action = None
         self._predictor.reset()
+        self._static_occ_inflated = None
+        self._ctg_cache = None
+        self._ctg_cache_goal = None
 
     def _cell(self, p: np.ndarray, shape: tuple[int, ...]) -> tuple[int, ...]:
         return tuple(
             int(np.clip(p[i] / self.resolution, 0, shape[i] - 1)) for i in range(len(shape))
         )
+
+    def _mask_dynamic_cells(self, occ_raw: np.ndarray, d: Mapping[str, Any]) -> None:
+        """Zero out cells inside a dynamic obstacle's footprint (in-place).
+
+        The heuristic ignores movers — the rollout's sphere-sphere distance
+        check is what enforces dynamic-obstacle avoidance. Mask is applied
+        once per episode against the raw (un-inflated) occupancy.
+        """
+        pos = np.asarray(d.get("position", ()), dtype=float)
+        if pos.size == 0:
+            return
+        radius = float(d.get("radius", 0.5))
+        cells = max(1, int(np.ceil(radius / self.resolution)))
+        ndim = occ_raw.ndim
+        center = self._cell(pos[:ndim], occ_raw.shape)
+        if ndim == 2:
+            for dx in range(-cells + 1, cells):
+                for dy in range(-cells + 1, cells):
+                    cx, cy = center[0] + dx, center[1] + dy
+                    if 0 <= cx < occ_raw.shape[0] and 0 <= cy < occ_raw.shape[1]:
+                        occ_raw[cx, cy] = False
+        else:  # 3D
+            for dx in range(-cells + 1, cells):
+                for dy in range(-cells + 1, cells):
+                    for dz in range(-cells + 1, cells):
+                        cx, cy, cz = center[0] + dx, center[1] + dy, center[2] + dz
+                        if (
+                            0 <= cx < occ_raw.shape[0]
+                            and 0 <= cy < occ_raw.shape[1]
+                            and 0 <= cz < occ_raw.shape[2]
+                        ):
+                            occ_raw[cx, cy, cz] = False
 
     def _occupied(self, occ: np.ndarray, p: np.ndarray) -> bool:
         ndim = occ.ndim
@@ -138,7 +180,25 @@ class SamplingMPCPlanner(Planner):
         if occ[self._cell(obs, occ.shape)] or occ[self._cell(gl, occ.shape)]:
             occ = occ_raw
 
-        ctg = dijkstra_cost_to_go(occ, self._cell(gl, occ.shape))
+        # Heuristic ctg lives on a cached static-only occupancy: dynamic
+        # obstacles are masked out the first time we see them, since the
+        # rollout already does proper sphere-distance avoidance. This keeps
+        # the heuristic stable across replans (so we can cache once per
+        # episode) and avoids the Dijkstra cost dominating 3D plan_dt.
+        if self._static_occ_inflated is None or self._static_occ_inflated.shape != occ.shape:
+            static_raw = occ_raw.copy()
+            if dynamic_obstacles:
+                for d in dynamic_obstacles:
+                    self._mask_dynamic_cells(static_raw, d)
+            self._static_occ_inflated = inflate_obstacles(static_raw, self.inflate)
+            self._ctg_cache = None
+            self._ctg_cache_goal = None
+
+        goal_cell = self._cell(gl, self._static_occ_inflated.shape)
+        if self._ctg_cache is None or self._ctg_cache_goal != goal_cell:
+            self._ctg_cache = dijkstra_cost_to_go(self._static_occ_inflated, goal_cell)
+            self._ctg_cache_goal = goal_cell
+        ctg = self._ctg_cache
         max_finite = float(np.max(ctg[np.isfinite(ctg)])) if np.any(np.isfinite(ctg)) else 1e6
         unreachable_penalty = max_finite + 100.0
 
