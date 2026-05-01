@@ -472,6 +472,31 @@ def test_kalman_track_associates_across_calls() -> None:
     assert len(p._tracks) == 1, "track was duplicated on each call"
 
 
+def test_kalman_delayed_sensor_recovers_current_pose() -> None:
+    """Kalman-delayed sensor should converge to the true current pose
+    on a constant-velocity target after the buffer fills + a few KF updates."""
+    import numpy as np
+
+    from uav_nav_lab.sensor import SENSOR_REGISTRY
+
+    cls = SENSOR_REGISTRY.get("kalman_delayed")
+    sensor = cls.from_config({
+        "delay": 0.2, "dt": 0.05,
+        "process_noise_std": 0.5, "measurement_noise_std": 0.05,
+    })
+    sensor.reset(seed=42)
+    pos = np.zeros(2)
+    truth_v = np.array([2.0, 0.0])
+    last_obs = None
+    last_truth = None
+    for k in range(40):
+        last_truth = pos.copy()
+        last_obs = sensor.observe(k * 0.05, pos)
+        pos = pos + truth_v * 0.05
+    # by step 40 the KF should be tracking close to the current truth
+    assert np.allclose(last_obs, last_truth, atol=0.3)
+
+
 def test_delayed_sensor_velocity_window_smooths_noisy_position() -> None:
     """A larger velocity_window should reduce the variance of the
     extrapolated estimate when position observations are noisy."""

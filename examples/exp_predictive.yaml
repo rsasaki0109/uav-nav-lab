@@ -337,6 +337,54 @@
 #     --param sensor.extrapolate=true \
 #     --param sensor.velocity_window=1,3,5,10 \
 #     --param planner.max_speed=15 --param num_episodes=30 -j 4
+#
+# Kalman ego sensor (kalman_delayed) vs the moving-average estimator —
+# does an explicit state-space model close the rest of the cliff? At
+# delay=0.5 across speeds (Pareto MPC, n=20):
+#
+#   speed   no-extrap   ma w=1   ma w=5   kalman_delayed
+#     10        25        60       45            10
+#     15        25        35       40            10
+#     20        10        40       25             5
+#     25        20        15       50             0
+#     30        20         5       45            15
+#
+# Tuning the KF's process / measurement noise (q × r at delay=0.5,
+# speed=15) does not save it: the *best* configuration (q=1.0, r=2.0)
+# tops out at 25% — equal to the no-extrap baseline, well below
+# window=5's 40%.
+#
+# Why the more sophisticated estimator loses to a simple MA: the
+# drone's true motion is *not* constant velocity. MPC replans every
+# `replan_period` seconds and changes the commanded velocity each
+# time. The KF's optimality assumes Gaussian noise on a known
+# dynamics model; under frequent maneuvers the CV assumption is
+# wrong, and the KF takes too long to "trust" velocity changes.
+# The MA has no model; it just averages recent finite-difference
+# velocities, picking up maneuvers within ~window/2 samples.
+# At realistic flight cadences (~5 Hz replan, abrupt direction
+# changes around obstacles) the MA's structure-free responsiveness
+# beats KF's smoothing.
+#
+# Engineering takeaway: simple, model-free estimators can dominate
+# more sophisticated ones when the motion model assumption breaks.
+# Adaptive filters (IMM, sliding-window MAP) or just retuning q to
+# very large values (≈ "trust the model not at all") are the
+# next-step experiments — but for the unsmoothed CV-extrapolation
+# +moving-average baseline already lifts the cliff substantially.
+#
+# Reproduce with:
+#   uav-nav sweep examples/exp_predictive.yaml \
+#     --param planner.horizon=20 --param planner.n_samples=16 \
+#     --param sensor.type=kalman_delayed --param sensor.delay=0.5 \
+#     --param planner.max_speed=10,15,20,25,30 \
+#     --param num_episodes=20 -j 4
+#   uav-nav sweep examples/exp_predictive.yaml \
+#     --param planner.horizon=20 --param planner.n_samples=16 \
+#     --param sensor.type=kalman_delayed --param sensor.delay=0.5 \
+#     --param sensor.process_noise_std=0.1,0.5,1.0,2.0 \
+#     --param sensor.measurement_noise_std=0.05,0.5,2.0 \
+#     --param planner.max_speed=15 --param num_episodes=20 -j 4
 name: predictive_mpc
 seed: 42
 num_episodes: 5
