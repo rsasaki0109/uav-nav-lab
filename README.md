@@ -333,6 +333,31 @@ right direction* — when one drone yields, the others see its new
 trajectory and react, so the system as a whole degrades less than
 independent drones would.
 
+### Wind miscalibration: planner belief must match sim reality
+
+`examples/exp_wind.yaml` — constant northward wind disturbance × planner
+wind belief, 4 × 4 grid, n=15 episodes:
+
+<p align="center">
+<img src="docs/images/wind_miscal.png" alt="6-panel sim_wind × planner_wind sweep showing diagonal-wins miscalibration" width="640">
+</p>
+
+|  sim_wind \ planner_wind | 0 | 3 | 6 | 9 |
+|---|---|---|---|---|
+| **0** | **93.3** | 60.0 | 33.3 | 20.0 |
+| **3** | 66.7 | **100.0** | 53.3 | 33.3 |
+| **6** | 20.0 | 66.7 | **93.3** | 66.7 |
+| **9** |  0.0 |  0.0 |  0.0 |  0.0 |
+
+The diagonal wins — matched (planner belief = sim reality) recovers
+93-100 %. Mismatch in either direction hurts symmetrically: under-
+correction blows the drone off course, over-correction pre-compensates
+into nothing. At `sim=6 m/s`, wind awareness lifts success from **20 %
+to 93 %** (+73 pp) — one of the largest single-knob wins in the
+framework. But at `sim=9 m/s` against `max_speed=8 m/s` no belief
+saves you: the drone literally cannot make headway and every cell in
+that row is 0 %. Awareness cannot beat physics.
+
 ### The perception-latency cliff: a four-step research saga
 
 <p align="center">
