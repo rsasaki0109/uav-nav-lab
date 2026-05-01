@@ -142,6 +142,15 @@ def run_sweep(
     for i, cfg in enumerate(cfgs):
         run_dir = output_root / f"run_{i:03d}"
         run_dir.mkdir(parents=True, exist_ok=True)
+        # Clear stale episode files from a prior sweep at the same path —
+        # without this, a follow-up sweep with fewer episodes leaves the
+        # earlier run's later episode_*.json in place and summarize_run
+        # mixes the two, producing nonsense success rates.
+        for stale in run_dir.glob("episode_*.json"):
+            stale.unlink()
+        stale_summary = run_dir / "summary.json"
+        if stale_summary.exists():
+            stale_summary.unlink()
         with (run_dir / "config.yaml").open("w", encoding="utf-8") as f:
             yaml.safe_dump(cfg.to_dict(), f, sort_keys=False)
         work.append((cfg.to_dict(), str(run_dir)))

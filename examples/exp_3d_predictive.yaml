@@ -56,6 +56,50 @@
 #     --param planner.horizon=20,40,60,80,120 \
 #     --param num_episodes=8 -j 4
 #
+# === 3D perception-latency cliff ===
+#
+# Validated 3D delay × max_speed sweep at the new 3D Pareto config
+# (n_samples=8, horizon=20, n=6 episodes per cell, success rate %):
+#
+#     delay\speed     10    15    20    25    30
+#       0.00          83   100   100   100    83
+#       0.05          83   100   100   100    83
+#       0.10          83   100   100    83    50
+#       0.20          67   100    83    83    50
+#       0.50          83    83    33    50    50   ← cliff at high speed
+#
+#   planner_dt mean (ms):
+#     delay\speed      10     15     20     25     30
+#       0.00           77    159    171    151    162
+#       0.05           77    155    204    133    163
+#       0.10           67     88    200    229    437
+#       0.20           77    154    122    278    416
+#       0.50           85    163    198    331    441
+#
+# Findings:
+#  - **The cliff transfers from 2D to 3D in the same corner**. 2D had
+#    delay=0.5 × speed≥20 m/s drop to 10-25 % (success); 3D has the same
+#    corner at 33-50 %. The extra escape volume softens the cliff (33 %
+#    vs 10 % at speed=20) but does not eliminate it. The engineering
+#    principle holds: when delay × max_speed approaches the danger-zone
+#    radius (~3.5 m here), no planner-side shield fully compensates.
+#  - **Plan_dt grows with both delay and speed**. At delay=0.1 × speed=30,
+#    a single replan takes 437 ms vs 67 ms in the upper-left corner —
+#    high-speed cells under any non-zero delay become CPU-saturated.
+#    The rollout collision check has more dynamic-obstacle hit-tests
+#    when the drone moves fast and obstacles are tracked uncertainly.
+#  - **Low-delay row stays comfortable**. At delay ≤ 0.05 s, every speed
+#    in the sweep clears 83-100 %. The 3D scenario tolerates moderate
+#    sensor lag without the perception cliff that hurts 2D.
+#
+# Reproduce with:
+#   uav-nav sweep examples/exp_3d_predictive.yaml \
+#     --param planner.n_samples=8 --param planner.horizon=20 \
+#     --param sensor.type=delayed \
+#     --param sensor.delay=0.0,0.05,0.1,0.2,0.5 \
+#     --param planner.max_speed=10,15,20,25,30 \
+#     --param num_episodes=6 -j 4
+#
 name: predictive_mpc_3d
 seed: 42
 num_episodes: 5

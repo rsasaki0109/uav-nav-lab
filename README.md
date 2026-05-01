@@ -247,6 +247,31 @@ Methodological transfer: re-validate Pareto in every dimensionality.
 n_samples preference flips, the compute envelope changes, and what
 looked like a CPU-saturation cliff in 3D was actually a missing cache.
 
+### 3D perception-latency cliff: same corner, softened
+
+Same 3D scenario, sensor.delay × max_speed sweep at the 3D Pareto config
+(n_samples=8, horizon=20, n=6):
+
+<p align="center">
+<img src="docs/images/cliff_3d.png" alt="6-panel sensor.delay × max_speed sweep on the 3D voxel world: success drop concentrated in the bottom-right cliff corner" width="640">
+</p>
+
+|  delay \ speed  |  10  |  15  |  20  |  25  |  30  |
+|---|---|---|---|---|---|
+| 0.00 |  83 | 100 | 100 | 100 |  83 |
+| 0.05 |  83 | 100 | 100 | 100 |  83 |
+| 0.10 |  83 | 100 | 100 |  83 |  50 |
+| 0.20 |  67 | 100 |  83 |  83 |  50 |
+| 0.50 |  83 |  83 | **33** |  50 |  50 |
+
+The cliff transfers from 2D to 3D in the same `delay=0.5 × speed≥20 m/s`
+corner. 2D had this region at 10-25 %; 3D softens it to 33-50 % —
+the extra escape volume helps but does not eliminate the failure mode.
+The engineering principle holds: when `delay × max_speed` approaches
+the danger-zone radius (~3.5 m here), no planner-side shield fully
+compensates. The remediation ladder built for 2D (sensor extrapolation
++ velocity_window smoothing) is the obvious next experiment to port.
+
 ### Pareto config materially rewrites prior conclusions
 
 The previous heatmap on the same scenario at the YAML's old defaults
