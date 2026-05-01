@@ -18,9 +18,16 @@ dynamic obstacles to a goal — same scenario used for every result below.*
 
 </div>
 
+> **TL;DR.** On a 50 × 50 dynamic-obstacle scenario (n=30 episodes,
+> Wilson 95 % CIs), this framework produces — from three one-line
+> `uav-nav run` invocations — straight-line **0 % ± 5.7**, A*
+> **20 % ± 13.9**, Pareto-MPC **100 % ± 5.7**. Each example YAML
+> carries the table, the heatmap, and the reproduce command in its
+> header.
+
 ---
 
-## What you get
+## ✨ What you get
 
 - **Pluggable backends** for sim / scenario / planner / sensor / predictor —
   add one with a `@REGISTRY.register("name")` decorator and a
@@ -33,7 +40,7 @@ dynamic obstacles to a goal — same scenario used for every result below.*
 - **Multi-drone** scenarios with joint-success aggregation and palette viz.
 - **6-panel sweep heatmap** for compute-aware ablations, animated GIF replays.
 
-## Why
+## 🤔 Why
 
 Most UAV planning research either (a) hard-codes a single MPC variant,
 single sensor, single scenario, and reports a number, or (b) buries
@@ -45,7 +52,7 @@ declare the experiment in YAML, sweep with `--param`, get heatmaps and
 Wilson 95 % CIs out of the box, and have every config carry its own
 validated finding — so the file is the artifact, not a Notion page.
 
-## Quick start
+## 🚀 Quick start
 
 ```bash
 git clone https://github.com/rsasaki0109/uav-nav-lab
@@ -69,7 +76,7 @@ uav-nav sweep examples/exp_predictive.yaml \
 uav-nav viz <out>     # → 6-panel sweep_summary.png
 ```
 
-## CLI
+## 🛠️ CLI
 
 | command | what |
 |---|---|
@@ -85,7 +92,31 @@ uav-nav viz <out>     # → 6-panel sweep_summary.png
 `[3,0]` for vector values, `true` / `false` literals. Three-level dotted
 keys work: `planner.predictor.velocity_noise_std=0.0,0.5,1.0`.
 
-## Architecture
+## 🏗️ Architecture
+
+The CLI is one verb per pipeline stage; each verb composes the same
+pluggable backends:
+
+```mermaid
+flowchart LR
+    YAML[experiment.yaml] -->|--param overrides| RUN[uav-nav run]
+    RUN --> EPS[per-episode JSONs<br/>summary.json]
+    EPS --> EVAL[uav-nav eval<br/>Wilson 95% CIs]
+    EPS --> VIZ[uav-nav viz<br/>trajectory PNG]
+    EPS --> ANIM[uav-nav anim<br/>animated GIF]
+    YAML -->|Cartesian product| SWEEP[uav-nav sweep -j N]
+    SWEEP --> CELLS[run_000…run_NNN]
+    CELLS --> SVIZ[uav-nav viz<br/>6-panel heatmap]
+    CELLS --> CMP[uav-nav compare]
+
+    subgraph backends["pluggable backends (registry)"]
+      SIM[sim] --- SCEN[scenario] --- PLAN[planner] --- SENS[sensor] --- PRED[predictor]
+    end
+    RUN -.uses.-> backends
+    SWEEP -.uses.-> backends
+```
+
+Source layout:
 
 ```
 uav_nav_lab/
@@ -100,11 +131,21 @@ uav_nav_lab/
 └── cli          run / eval / compare / sweep / viz / anim / list
 ```
 
+Backends at a glance:
+
+| kind | shipped | registry |
+|---|---|---|
+| sim | `dummy_2d`, `dummy_3d` (+ `airsim`, `ros2` stubs) | `SIM_REGISTRY` |
+| scenario | `grid_world`, `voxel_world`, `multi_drone_grid` | `SCENARIO_REGISTRY` |
+| planner | `astar`, `straight`, `mpc` | `PLANNER_REGISTRY` |
+| sensor | `perfect`, `delayed`, `kalman_delayed`, `lidar` | `SENSOR_REGISTRY` |
+| predictor | `constant_velocity`, `noisy_velocity`, `kalman_velocity` | `PREDICTOR_REGISTRY` |
+
 Adding a new backend is one new file with a `@REGISTRY.register("name")`
 decorator and a `from_config(cfg)` classmethod — the CLI picks it up via
 `type: name` in YAML, no central wiring needed.
 
-## Selected research findings
+## 📊 Selected research findings
 
 Each finding lives in the comment header of the YAML that produces it,
 along with a one-line `uav-nav sweep` invocation that reproduces it.
@@ -185,6 +226,14 @@ keep up.
 
 ### Multi-drone N-scaling and peer-prediction coordination
 
+<p align="center">
+<img src="docs/images/multi_drone_3.png" alt="Three drones (alice/bob/charlie) crossing each other's paths to opposite-corner goals; joint=all_success" width="540">
+</p>
+
+*N=3 multi-drone episode — alice / bob / charlie all reach their
+opposite-corner goals while routing around each other via the MPC's
+constant-velocity peer prediction.*
+
 `examples/exp_multi_drone_{2,3,4}.yaml` — same world, only drone count
 changes. n=30, joint metrics with Wilson 95 % CIs:
 
@@ -235,7 +284,7 @@ sophisticated ones when the motion-model assumption breaks. Picking the
 estimator that *actually wins* is more useful than picking the one that
 sounds fanciest — the framework is built to make that picking trivial.
 
-## Status
+## ✅ Status
 
 - **v0.1.0** released, 42 tests, GitHub Actions CI on Python 3.10 / 3.11 / 3.12
   + a CLI smoke job.
@@ -250,7 +299,7 @@ External backends (AirSim / PX4 / ROS 2) ship as lazy-import stubs —
 swap them in by registering a real `SimInterface` subclass without
 changing the rest of the stack.
 
-## Roadmap
+## 🗺️ Roadmap
 
 - 3D Pareto + perception-latency re-validation in `voxel_world`.
 - Wind / disturbance model in `dummy_*` simulators.
@@ -258,6 +307,6 @@ changing the rest of the stack.
 - Real-backend drivers (one of AirSim / PX4-SITL / ROS 2 Gazebo) wired
   through the `SimInterface` ABC.
 
-## License
+## 📄 License
 
 Apache-2.0.
