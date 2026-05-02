@@ -7,6 +7,7 @@ Subcommands:
   sweep   <exp.yaml> --param k=spec ...   Cartesian-product sweep
   viz     <run_dir>                       render trajectory PNGs
   anim    <run_dir>                       render animated GIFs (2D)
+  video   <run_dir>                       stitch saved camera frames into mp4
   list                                    show registered backends
 """
 
@@ -107,6 +108,16 @@ def cmd_anim(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_video(args: argparse.Namespace) -> int:
+    from .video import stitch_run
+
+    saved = stitch_run(Path(args.run_dir), fps=int(args.fps))
+    for p in saved:
+        print(f"  wrote {p}")
+    print(f"[video] {len(saved)} mp4(s) saved")
+    return 0
+
+
 def cmd_list(_: argparse.Namespace) -> int:
     print("planners:  ", ", ".join(PLANNER_REGISTRY.names()))
     print("sensors:   ", ", ".join(SENSOR_REGISTRY.names()))
@@ -154,6 +165,11 @@ def build_parser() -> argparse.ArgumentParser:
     pa.add_argument("run_dir")
     pa.add_argument("--fps", type=int, default=20, help="output frame rate (default 20)")
     pa.set_defaults(func=cmd_anim)
+
+    pvd = sub.add_parser("video", help="ffmpeg per-step camera frames into mp4(s)")
+    pvd.add_argument("run_dir")
+    pvd.add_argument("--fps", type=int, default=20, help="output frame rate (default 20)")
+    pvd.set_defaults(func=cmd_video)
 
     pl = sub.add_parser("list", help="list registered backends")
     pl.set_defaults(func=cmd_list)

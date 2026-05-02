@@ -44,6 +44,17 @@ simulator:
   # state.extra["lidar_points"][name]. Downstream rasterization /
   # fusion is the consumer's job — this bridge stays perception-agnostic.
   # lidars: [FrontLidar]
+  #
+  # cameras: list of {name, image_type} entries. The bridge calls
+  # simGetImages() per step and stashes compressed PNG bytes at
+  # state.extra["camera_images"][name]. image_type is one of
+  # scene (default), depth_vis, depth_perspective, depth_planar,
+  # segmentation, surface_normals, infrared. Combine with
+  # `output.save_camera_frames: true` and `uav-nav video <run_dir>`
+  # to produce a per-episode mp4 from sim frames.
+  # cameras:
+  #   - {name: front_center, image_type: scene}
+  #   - {name: front_center, image_type: depth_vis}
 
 planner:
   type: mpc
@@ -66,3 +77,7 @@ sensor:
 
 output:
   dir: results/airsim_baseline
+  # Save per-step camera frames to <run_dir>/frames_NNN/. Combined with
+  # the cameras: ... block above, then `uav-nav video <run_dir>` ffmpegs
+  # them into per-camera mp4s.
+  # save_camera_frames: true

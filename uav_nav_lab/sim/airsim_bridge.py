@@ -39,6 +39,15 @@ LiDAR sensors:
   - Downstream rasterization / fusion (point cloud → occupancy /
     distance field) is intentionally left to consumer code; this
     bridge does not pin a perception architecture.
+
+Cameras:
+  - Configure with `simulator.cameras: [{name, image_type}, …]`
+    where `image_type` is one of `scene` (default), `depth_vis`,
+    `depth_perspective`, `depth_planar`, `segmentation`,
+    `surface_normals`, `infrared`. Compressed PNG bytes land at
+    `state.extra["camera_images"][name]` after each step. Combined
+    with `output.save_camera_frames: true` and the `uav-nav video`
+    CLI verb, this gives a one-line path from sim to MP4 demo reels.
 """
 
 from __future__ import annotations
@@ -94,6 +103,7 @@ class AirSimBridge(SimInterface):
         goal_radius: float = 1.5,
         max_steps: int = 2000,
         lidars: list[str] | None = None,
+        cameras: list[Mapping[str, Any]] | None = None,
         client: Any = None,
     ) -> None:
         self.dt = float(dt)
@@ -108,6 +118,13 @@ class AirSimBridge(SimInterface):
         # the converted (N, 3) ENU point cloud at
         # state.extra["lidar_points"][name]. Empty / unset = no polling.
         self.lidars: list[str] = list(lidars or [])
+        # Camera specs: each {name, image_type}. Compressed PNG bytes per
+        # camera land at state.extra["camera_images"][name] after each step.
+        # Empty / unset = no polling.
+        self.cameras: list[dict[str, str]] = [
+            {"name": str(c["name"]), "image_type": str(c.get("image_type", "scene"))}
+            for c in (cameras or [])
+        ]
         # `client` lets tests inject a fake airsim client; in production
         # the real client is created lazily on first reset/step.
         self._client: Any = client
@@ -117,6 +134,7 @@ class AirSimBridge(SimInterface):
     @classmethod
     def from_config(cls, cfg: Mapping[str, Any], scenario: Any) -> "AirSimBridge":
         lidars_cfg = cfg.get("lidars", []) or []
+        cameras_cfg = cfg.get("cameras", []) or []
         return cls(
             dt=float(cfg.get("dt", 0.05)),
             scenario=scenario,
@@ -126,6 +144,7 @@ class AirSimBridge(SimInterface):
             goal_radius=float(cfg.get("goal_radius", 1.5)),
             max_steps=int(cfg.get("max_steps", 2000)),
             lidars=[str(name) for name in lidars_cfg],
+            cameras=list(cameras_cfg),
         )
 
     def _ensure_client(self) -> Any:
@@ -143,6 +162,34 @@ class AirSimBridge(SimInterface):
         self._client.enableApiControl(True, self.vehicle)
         self._client.armDisarm(True, self.vehicle)
         return self._client
+
+    def _build_image_requests(self) -> list[Any]:
+        """Translate the bridge's camera spec list to airsim.ImageRequest
+        objects. Lazy-imports airsim so the bridge module imports cleanly
+        in environments where airsim is not installed (CI, mock tests
+        that inject a fake `airsim` into sys.modules)."""
+        import airsim  # type: ignore[import-not-found]
+
+        type_map = {
+            "scene": airsim.ImageType.Scene,
+            "depth_vis": airsim.ImageType.DepthVis,
+            "depth_perspective": airsim.ImageType.DepthPerspective,
+            "depth_planar": airsim.ImageType.DepthPlanar,
+            "segmentation": airsim.ImageType.Segmentation,
+            "surface_normals": airsim.ImageType.SurfaceNormals,
+            "infrared": airsim.ImageType.Infrared,
+        }
+        return [
+            # pixels_as_float=False, compress=True → response.image_data_uint8
+            # is a PNG byte string ready to be written to disk.
+            airsim.ImageRequest(
+                spec["name"],
+                type_map.get(spec["image_type"], airsim.ImageType.Scene),
+                False,
+                True,
+            )
+            for spec in self.cameras
+        ]
 
     def reset(
         self,
@@ -228,6 +275,17 @@ class AirSimBridge(SimInterface):
                     client.getLidarData(name, vehicle_name=self.vehicle).point_cloud
                 )
                 for name in self.lidars
+            }
+        # Poll any configured cameras. simGetImages takes a list of
+        # ImageRequest (airsim.ImageType + name + raw flag + compress flag).
+        # We always ask for compressed PNG so the bytes can be written to
+        # disk verbatim by the runner / `uav-nav video` pipeline.
+        if self.cameras:
+            requests = self._build_image_requests()
+            responses = client.simGetImages(requests, vehicle_name=self.vehicle)
+            self._state.extra["camera_images"] = {
+                spec["name"]: bytes(getattr(resp, "image_data_uint8", b"") or b"")
+                for spec, resp in zip(self.cameras, responses)
             }
         # AirSim's collision flag is the source of truth in physics-simulated
         # worlds; the scenario's occupancy is only used for planner input.

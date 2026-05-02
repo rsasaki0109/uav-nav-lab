@@ -93,6 +93,7 @@ uav-nav viz <out>     # → 6-panel sweep_summary.png
 | `uav-nav sweep <yaml> --param k=spec` | Cartesian-product over `--param`s; each cell gets its own dir |
 | `uav-nav viz <run_or_sweep>` | trajectory PNG per episode, or 1D / 2D sweep heatmap |
 | `uav-nav anim <run_dir>` | animated GIF replay (2D) |
+| `uav-nav video <run_dir>` | ffmpeg per-step AirSim camera frames into per-episode MP4 |
 | `uav-nav list` | enumerate registered planners / sensors / sims / scenarios |
 
 `--param` syntax: `start:stop:step` for ranges, `a,b,c` for explicit lists,
@@ -251,6 +252,10 @@ External backends:
   `pointcloud_occupancy` sensor (`type: pointcloud_occupancy` in the
   sensor block) to rasterize those returns into the planner's
   occupancy grid; the bridge itself stays perception-agnostic.
+  Optional `cameras: [{name, image_type}, …]` polls `simGetImages()`
+  and stashes compressed PNG bytes at `state.extra["camera_images"][name]`;
+  set `output.save_camera_frames: true` and run `uav-nav video <run_dir>`
+  to ffmpeg them into per-episode / per-camera MP4 demo reels.
 - **ROS 2** (`uav_nav_lab/sim/ros2_bridge.py`) is wired end-to-end —
   publishes `geometry_msgs/Twist` on `/cmd_vel`, subscribes to
   `nav_msgs/Odometry` on `/odom` (and optional `std_msgs/Bool` on

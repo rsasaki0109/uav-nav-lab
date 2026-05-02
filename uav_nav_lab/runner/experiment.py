@@ -81,11 +81,15 @@ def _run_episode(
     replan_period: float,
     max_steps: int,
     episode_index: int,
+    frame_dir: Path | None = None,
 ) -> EpisodeRecorder:
     rec = EpisodeRecorder(episode_index=episode_index, seed=seed)
     state = sim.reset(seed=seed)
     sensor.reset(seed=seed)
     planner.reset()
+    if frame_dir is not None:
+        frame_dir.mkdir(parents=True, exist_ok=True)
+    step_idx = 0
 
     plan: Plan | None = None
     last_replan_t = -float("inf")
@@ -133,7 +137,19 @@ def _run_episode(
             sim_extra=dict(next_state.extra) if next_state.extra else None,
         )
 
+        # Persist any per-step camera frames the simulator surfaced. PNG
+        # bytes from AirSimBridge land here verbatim; `uav-nav video`
+        # ffmpegs them into per-camera mp4s.
+        if frame_dir is not None and next_state.extra:
+            cam_imgs = next_state.extra.get("camera_images") or {}
+            for cam_name, png_bytes in cam_imgs.items():
+                if not png_bytes:
+                    continue
+                fname = f"step_{step_idx:04d}_{cam_name}.png"
+                (frame_dir / fname).write_bytes(bytes(png_bytes))
+
         state = next_state
+        step_idx += 1
         if info.collision:
             rec.set_outcome("collision", final_t=float(state.t))
             return rec
@@ -164,10 +180,12 @@ def run_experiment(cfg: ExperimentConfig, output_dir: Path) -> Path:
     sim, planner, sensor, _ = _build(cfg)
     replan_period = float(cfg.planner.get("replan_period", 0.5))
     max_steps = int(cfg.simulator.get("max_steps", 2000))
+    save_frames = bool((cfg.output or {}).get("save_camera_frames", False))
 
     print(f"[run] {cfg.name}: {cfg.num_episodes} episode(s) → {output_dir}")
     for ep in range(cfg.num_episodes):
         seed = cfg.seed + ep
+        frame_dir = output_dir / f"frames_{ep:03d}" if save_frames else None
         rec = _run_episode(
             sim,
             planner,
@@ -176,6 +194,7 @@ def run_experiment(cfg: ExperimentConfig, output_dir: Path) -> Path:
             replan_period=replan_period,
             max_steps=max_steps,
             episode_index=ep,
+            frame_dir=frame_dir,
         )
         rec.save(output_dir / f"episode_{ep:03d}.json")
         print(f"  ep {ep:03d} seed={seed} outcome={rec.outcome} t={rec.summary.get('final_t', 0.0):.2f}s")
