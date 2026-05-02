@@ -214,6 +214,61 @@ def test_airsim_bridge_step_round_trips_enu_via_mock_client() -> None:
     assert info.collision is False
 
 
+def test_ros2_bridge_step_round_trips_enu_via_mock_adapter() -> None:
+    """Verify the ROS 2 bridge's publish-spin-read plumbing against an
+    injected mock adapter — no rclpy install required."""
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+    from uav_nav_lab.sim.ros2_bridge import Ros2Bridge
+
+    grid_cls = SCENARIO_REGISTRY.get("grid_world")
+    sc = grid_cls.from_config(
+        {"size": [10, 10], "start": [1.0, 1.0], "goal": [9.0, 9.0], "obstacles": {"type": "none"}}
+    )
+
+    class FakeAdapter:
+        def __init__(self) -> None:
+            self.commands: list[tuple[float, float, float]] = []
+            self.teleports: list[np.ndarray] = []
+            # Canned ENU pose / velocity returned from /odom on every tick.
+            self._pose = np.array([3.0, 4.0, 1.0])
+            self._vel = np.array([0.5, 0.6, 0.0])
+            self._collision = False
+
+        def publish_velocity(self, vx: float, vy: float, vz: float) -> None:
+            self.commands.append((vx, vy, vz))
+
+        def latest_pose_velocity(self):
+            return (self._pose.copy(), self._vel.copy())
+
+        def latest_collision(self) -> bool:
+            return self._collision
+
+        def tick(self, _timeout_s: float) -> None:
+            pass
+
+        def teleport(self, pos_enu: np.ndarray) -> None:
+            self.teleports.append(np.asarray(pos_enu).copy())
+
+    fake = FakeAdapter()
+    bridge = Ros2Bridge(dt=0.05, scenario=sc, adapter=fake)
+    state = bridge.reset()
+    assert state.position.shape[0] == 2
+    # reset() teleports the (3D-padded) start pose.
+    assert len(fake.teleports) == 1
+    assert np.allclose(fake.teleports[0][:2], np.array([1.0, 1.0]))
+    # Initial state taken from the canned odom (ENU pass-through, no flip).
+    assert np.allclose(state.position, np.array([3.0, 4.0]))
+
+    # ENU velocity (1, 2) → adapter sees (1, 2, 0). No frame flip vs AirSim's NED.
+    out_state, info = bridge.step(np.array([1.0, 2.0]))
+    last = fake.commands[-1]
+    assert last[0] == 1.0
+    assert last[1] == 2.0
+    assert last[2] == 0.0  # 2D scenario → vz = 0
+    assert np.allclose(out_state.position, np.array([3.0, 4.0]))
+    assert info.collision is False
+
+
 def test_rrt_star_returns_shorter_path_than_rrt_on_open_world() -> None:
     """RRT* rewiring should produce a path no longer than plain RRT on
     average. We compare on a wide-open world where rewiring has clear

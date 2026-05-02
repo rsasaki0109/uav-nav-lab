@@ -121,7 +121,7 @@ Source layout:
 
 ```
 uav_nav_lab/
-├── sim/         dummy_2d / dummy_3d (point-mass), airsim, ros2 (stubs)
+├── sim/         dummy_2d / dummy_3d (point-mass), airsim, ros2
 ├── scenario/    grid_world, voxel_world, multi_drone_grid
 ├── planner/     astar, straight, mpc, rrt, rrt_star  (registry: PLANNER_REGISTRY)
 ├── sensor/      perfect, delayed, kalman_delayed, lidar
@@ -136,7 +136,7 @@ Backends at a glance:
 
 | kind | shipped | registry |
 |---|---|---|
-| sim | `dummy_2d`, `dummy_3d` (+ `airsim`, `ros2` stubs) | `SIM_REGISTRY` |
+| sim | `dummy_2d`, `dummy_3d`, `airsim`, `ros2` | `SIM_REGISTRY` |
 | scenario | `grid_world`, `voxel_world`, `multi_drone_grid` | `SCENARIO_REGISTRY` |
 | planner | `astar`, `straight`, `mpc`, `rrt`, `rrt_star` | `PLANNER_REGISTRY` |
 | sensor | `perfect`, `delayed`, `kalman_delayed`, `lidar` | `SENSOR_REGISTRY` |
@@ -433,10 +433,15 @@ External backends:
   `examples/exp_airsim.yaml` after `pip install airsim` and starting
   any AirSim binary; mock-injectable client makes the conversion logic
   CI-testable without an AirSim install.
-- **ROS 2 / PX4-SITL** (`ros2_bridge.py`) ships as a structural sketch —
-  the topic plumbing is documented but `_ensure_node` raises
-  `NotImplementedError`. Wire publishers / subscribers there to drop
-  in a Gazebo-or-Ignition setup; the rest of the stack does not change.
+- **ROS 2** (`uav_nav_lab/sim/ros2_bridge.py`) is wired end-to-end —
+  publishes `geometry_msgs/Twist` on `/cmd_vel`, subscribes to
+  `nav_msgs/Odometry` on `/odom` (and optional `std_msgs/Bool` on
+  `/collision`), spins once per `dt` so the latest message is
+  consumed each step. Run via `examples/exp_ros2.yaml` after sourcing
+  ROS 2 and bringing up a sim (Gazebo / Ignition / PX4-SITL via
+  MAVROS). Frames assumed ENU per REP-103; PX4-NED users convert one
+  layer up. Mock-injectable adapter makes the plumbing CI-testable
+  without rclpy.
 
 ## 🗺️ Roadmap
 
@@ -445,9 +450,10 @@ External backends:
 - Wind / disturbance model in `dummy_*` simulators.
 - CHOMP / trajectory-optimisation planners on top of the existing
   RRT / RRT* sampling backends.
-- Complete the ROS 2 / PX4-SITL bridge (publishers / subscribers,
-  spin-once per step, `/clock` handling for sim-time). AirSim is
-  already wired.
+- ROS 2 bridge sim-time: respect `/clock` and `use_sim_time` so
+  PX4-SITL fast-forward stays decoupled from the runner's wall-clock
+  loop (current bridge ticks `rclpy.spin_once` with wall-clock
+  timeouts, fine for real-time but not for fast-forward).
 
 ## 📄 License
 

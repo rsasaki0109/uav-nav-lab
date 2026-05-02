@@ -1,0 +1,63 @@
+# ROS 2 bridge — runs the framework's experiment runner against a
+# rclpy-backed sim (Gazebo, Ignition, PX4-SITL via MAVROS, …).
+# Not exercised in CI (would need ROS 2 sourced).
+#
+# Setup:
+#   source /opt/ros/jazzy/setup.bash
+#   ros2 launch <your_sim_pkg> bringup.launch.py     # /odom + /cmd_vel up
+#
+# Run:
+#   uav-nav run examples/exp_ros2.yaml
+#
+# Notes:
+#  - Frame: ENU per REP-103. PX4-NED users convert in their MAVROS layer.
+#  - cmd_topic / odom_topic / collision_topic are remappable from the
+#    config — match your robot's namespace.
+#  - The scenario block stays the same as the dummy world; the planner
+#    sees its occupancy as the source of truth, while ROS provides the
+#    physical ego state and (optionally) a contact-sensor collision flag.
+name: ros2_baseline
+seed: 42
+num_episodes: 3
+
+scenario:
+  type: grid_world
+  size: [50, 50]
+  start: [2.0, 2.0]
+  goal: [40.0, 40.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 30
+    seed: 7
+
+simulator:
+  type: ros2
+  cmd_topic: /cmd_vel
+  odom_topic: /odom
+  collision_topic: /collision
+  dt: 0.05
+  max_steps: 1500
+  goal_radius: 1.5
+
+planner:
+  type: mpc
+  max_speed: 8.0
+  replan_period: 0.2
+  horizon: 20
+  dt_plan: 0.05
+  n_samples: 16
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  safety_margin: 0.5
+  use_prediction: true
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/ros2_baseline
