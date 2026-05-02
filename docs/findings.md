@@ -19,6 +19,7 @@ Wilson 95 % intervals on rates, mean ± 1.96·SEM on continuous metrics.
 - [Multi-drone N-scaling and peer-prediction coordination](#multi-drone-n-scaling-and-peer-prediction-coordination)
 - [Wind miscalibration: planner belief must match sim reality](#wind-miscalibration-planner-belief-must-match-sim-reality)
 - [The perception-latency cliff: a four-step research saga](#the-perception-latency-cliff-a-four-step-research-saga)
+- [MPC + CHOMP smoothing: layering on a saturated planner is a wash](#mpc--chomp-smoothing-layering-on-a-saturated-planner-is-a-wash)
 
 ## MPC compute Pareto
 
@@ -248,3 +249,37 @@ Engineering takeaway: simple model-free estimators can dominate more
 sophisticated ones when the motion-model assumption breaks. Picking the
 estimator that *actually wins* is more useful than picking the one that
 sounds fanciest — the framework is built to make that picking trivial.
+
+## MPC + CHOMP smoothing: layering on a saturated planner is a wash
+
+`examples/exp_compare_mpc_chomp.yaml` — `mpc_chomp` planner wraps the
+validated Pareto MPC config and runs 15 CHOMP smoothing iterations on
+the rollout each replan, then clears `target_velocity` so the runner
+pure-pursues the smoothed waypoints. Hypothesis: file off the
+piecewise-straight corners at each replan boundary so the velocity
+profile is gentler. Same scenario / horizon / sample count as the
+plain-MPC baseline.
+
+|              | success           | plan_dt (mean) | mean &#124;Δcmd&#124;/step |
+|--------------|-------------------|---------------:|--------------:|
+| plain MPC    | 96.7 % [83, 99]   | 11.0 ms        | 0.32          |
+| **mpc + chomp** | 96.7 % [83, 99] | 18.9 ms (+71 %)| **0.61** (+90 %) |
+
+Honest null result: success rate identical, plan_dt up 71 %, and the
+per-step command delta nearly *doubles*. The reason is architectural,
+not a tuning bug. MPC's `target_velocity` bypass *is* the smoothness
+mechanism — it commits to one velocity for the whole `replan_period`
+(0.2 s = 4 control steps) so the controller has nothing to chase
+between replans and per-step `|Δcmd|` is small. CHOMP smoothing emits a
+curved waypoint sequence that pure-pursuit re-aims at every 0.05 s, so
+even though the *path* has fewer corners, the *control trajectory* has
+more direction changes.
+
+Engineering takeaway: layering a smoother on top of a planner that is
+already at its Pareto saturation point is a wash unless the smoothing
+target is downstream of where the cost lives — here the cost lives in
+the controller, not the path. To make CHOMP help in this setting you
+would need a velocity-profile-aware follower (or a planner that emits
+a velocity spline directly). Same Pareto-saturation lesson as the
+3D CHOMP+RRT result: a layer only wins if the layer below has room to
+be improved.
