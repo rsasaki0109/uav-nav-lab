@@ -1,0 +1,64 @@
+# Sensor ablation A — pointcloud_occupancy fed by synthetic omni-LiDAR.
+# Pairs with exp_ablate_sensor_depth.yaml (same scenario, depth-camera
+# sensor) so the only difference between the two runs is the sensor
+# stack: pointcloud sees in every direction within `lidar_range`;
+# depth sees only what's in the forward camera frustum.
+#
+# Same dynamic-obstacle scenario as the planner head-to-head
+# (exp_compare_*.yaml family); the planner is held constant at A* so
+# the "perception → re-plan around what you see" loop is the only
+# active variable.
+#
+# Measured (50×50, n=30, A* planner, Wilson 95 % CI):
+#   pointcloud (omni 8 m)   93.3 %  [78.7, 98.2]   plan_dt 1.36 ms   ← this file
+#   depth (forward 90° FOV) 63.3 %  [45.5, 78.1]   plan_dt 1.45 ms
+# The omni / forward gap is +30 pp in favour of pointcloud, with plan_dt
+# essentially identical (≈ 1.4 ms) — pure FOV-coverage tradeoff. The
+# ~30 % of episodes that fail with depth-only are usually obstacles
+# entering the planner's path from the side or behind during a replan
+# window; an omni-LiDAR sees them in time.
+#
+# Reproduce: uav-nav run examples/exp_ablate_sensor_pointcloud.yaml
+#            uav-nav eval results/abl_sensor_pc
+name: abl_sensor_pc
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: grid_world
+  size: [50, 50]
+  start: [2.0, 2.0]
+  goal: [45.0, 45.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 25
+    seed: 7
+
+simulator:
+  type: dummy_2d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+  synthetic_perception:
+    # Surfaces all in-range obstacle cells at state.extra["lidar_points"]["omni"].
+    lidar_range: 8.0
+
+planner:
+  type: astar
+  max_speed: 8.0
+  replan_period: 0.5
+  resolution: 1.0
+  inflate: 1
+
+sensor:
+  type: pointcloud_occupancy
+  resolution: 1.0
+  memory: true
+  inflate: 0
+  range_m: 8.0
+
+output:
+  dir: results/abl_sensor_pc
