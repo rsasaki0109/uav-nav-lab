@@ -19,6 +19,7 @@ Wilson 95 % intervals on rates, mean ± 1.96·SEM on continuous metrics.
 - [Multi-drone N-scaling and peer-prediction coordination](#multi-drone-n-scaling-and-peer-prediction-coordination)
 - [3D escape volume erases the coordination Δ](#3d-escape-volume-erases-the-coordination-δ)
 - [3D density ablation: bring escape volume back to non-trivial — Δ comes back too](#3d-density-ablation-bring-escape-volume-back-to-non-trivial--δ-comes-back-too)
+- [3D peer-prediction ablation: removing CV prediction is worse than 8× obstacle density](#3d-peer-prediction-ablation-removing-cv-prediction-is-worse-than-8-obstacle-density)
 - [Wind miscalibration: planner belief must match sim reality](#wind-miscalibration-planner-belief-must-match-sim-reality)
 - [The perception-latency cliff: a four-step research saga](#the-perception-latency-cliff-a-four-step-research-saga)
 - [MPC + CHOMP smoothing: layering on a saturated planner is a wash](#mpc--chomp-smoothing-layering-on-a-saturated-planner-is-a-wash)
@@ -322,6 +323,66 @@ the implementation cost, the right diagnostic is not "how many drones"
 or "what dimensionality", it is **"how much free volume per drone
 remains after static and self-imposed constraints"**. The middle is
 where the layer earns its keep.
+
+### 3D peer-prediction ablation: removing CV prediction is worse than 8× obstacle density
+
+The previous section argues that the +8 pp Δ at the dense cell *comes
+from* peer prediction earning its keep in the intermediate-density
+regime. That's a causal claim, and the natural test is the direct
+ablation: rerun the same dense + packed cells with `use_prediction:
+false` (each drone treats peers as if they don't exist) and see what
+collapses. `examples/exp_multi_drone_3d_4_{dense,packed}_indep.yaml`,
+n=30 each.
+
+| cell | per-drone (CI) | joint (CI) | Δ over `per^4` |
+|---|---|---|---|
+| dense (120 obs), pred ON  | 65.8 % [57.0, 73.7] | 26.7 % [14.2, 44.4] | **+8.0 pp** |
+| dense (120 obs), pred OFF | 16.7 % [11.1, 24.3] |  6.7 % [1.8, 21.3]  | +6.6 pp (per^4≈0) |
+| packed (240 obs), pred ON | 46.7 % [38.0, 55.6] | 10.0 % [3.5, 25.6] | +5.2 pp |
+| packed (240 obs), pred OFF| 18.3 % [12.4, 26.2] |  0.0 % [0.0, 11.4] | -0.1 pp |
+
+Two things happen when prediction goes off, and the bigger one is *not*
+the joint number:
+
+1. **Per-drone success collapses.** −49 pp at dense (66 → 17 %), −28 pp
+   at packed (47 → 18 %). The crossing pairs run head-on through each
+   other; without forecasting peer trajectories the MPC sees only the
+   peer's *current* position, which is harmless until it isn't. Peer
+   collisions count as per-drone collisions, so this ablation surfaces
+   in the per-drone column rather than only the joint one.
+2. **Joint success collapses harder.** Dense: 27 → 7 % (4× drop).
+   Packed: 10 → 0 % (no joint episode survives at all).
+
+The per-drone drop is the headline. Compare against the density-only
+sweep from the previous finding: going from 30 obstacles → 240
+obstacles (8× density) cost −49 pp of per-drone success. **Removing
+peer prediction at fixed dense costs the same −49 pp.** A planner
+without peer prediction faces the geometry of an 8× denser world.
+
+Δ over `per^4` stays positive at dense_indep (+6.6 pp) only because
+per-drone fell so far that the independence floor is essentially zero
+— any joint success now beats it. The number is arithmetically real
+but mechanistically misleading: it is not coordination paying off,
+it's two drones happening to survive the same episode by chance after
+both planners ignored each other. At packed_indep the chance runs out
+and joint = 0 / 30.
+
+What the dense → packed comparison still says even with prediction off:
+per-drone success barely moves (17 → 18 %) when density doubles in the
+no-prediction regime. The static-obstacle planning is no longer the
+bottleneck; peer collisions dominate the failure budget on the
+crossing-pair scenario regardless of how many obstacles are around.
+
+Engineering takeaway: in any scenario where peers' trajectories cross,
+constant-velocity peer prediction is doing more work than the MPC
+horizon, the static map quality, or moderate increases in obstacle
+density. It is the cheapest layer in the multi-drone stack
+(milliseconds per replan to forecast N−1 peers) and it pays back
+multiples of that — but only because crossing-pair scenarios punish
+its absence so heavily. In a non-crossing scenario (parallel goals,
+shared corridors with the same direction of travel) we'd expect this
+gap to shrink toward what the previous Δ-vs-density curve already
+predicted.
 
 ## Wind miscalibration: planner belief must match sim reality
 

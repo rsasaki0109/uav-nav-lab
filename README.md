@@ -251,7 +251,11 @@ takeaways) live in [`docs/findings.md`](docs/findings.md):
 - **Pareto config rewrites prior conclusions** — methodological lesson on
   always re-validating ablations at the planner's Pareto-optimal cell.
 - **Multi-drone N-scaling** — peer-prediction *correlates* failures the
-  right way (joint succ at N=4 beats independence model by +14.7 pp).
+  right way (joint succ at N=4 beats independence model by +14.7 pp);
+  in 3D the Δ vanishes with escape volume but returns at obstacle
+  density 4-8× higher; **ablating the prediction itself costs as much
+  per-drone success as 8× obstacle density** (49 pp), confirming it
+  causally drives the Δ rather than just correlating with it.
 - **Wind miscalibration** — diagonal-wins; +73 pp swing from awareness at
   one cell, but no belief beats `sim_wind > max_speed` physics.
 - **Perception-latency cliff: a four-step research saga** — including
@@ -264,8 +268,8 @@ takeaways) live in [`docs/findings.md`](docs/findings.md):
 - **6 sensor backends** (`perfect`, `delayed`, `kalman_delayed`, `lidar`, `pointcloud_occupancy`, `depth_image_occupancy`),
   **3 predictor backends** (`constant_velocity`, `noisy_velocity`,
   `kalman_velocity`), **6 planners** (`astar`, `straight`, `mpc`, `rrt`,
-  `rrt_star`, `chomp`), **3 scenarios** (`grid_world`, `voxel_world`,
-  `multi_drone_grid`).
+  `rrt_star`, `chomp`), **4 scenarios** (`grid_world`, `voxel_world`,
+  `multi_drone_grid`, `multi_drone_voxel`).
 - All ablation results are reproducible from the example YAMLs by
   copy-pasting one `uav-nav sweep ...` line.
 
