@@ -19,6 +19,7 @@ Wilson 95 % intervals on rates, mean ± 1.96·SEM on continuous metrics.
 - [Multi-drone N-scaling and peer-prediction coordination](#multi-drone-n-scaling-and-peer-prediction-coordination)
 - [Wind miscalibration: planner belief must match sim reality](#wind-miscalibration-planner-belief-must-match-sim-reality)
 - [The perception-latency cliff: a four-step research saga](#the-perception-latency-cliff-a-four-step-research-saga)
+- [MPC + CHOMP smoothing: layering on a saturated planner is a wash](#mpc--chomp-smoothing-layering-on-a-saturated-planner-is-a-wash)
 - [MPPI vs MPC: switching planner family doesn't break a tuned baseline](#mppi-vs-mpc-switching-planner-family-doesnt-break-a-tuned-baseline)
 
 ## MPC compute Pareto
@@ -184,6 +185,49 @@ tables, decentralised roundabout). The framework's MPC ceiling for
 this 60×60 world tops out around N=4-6; past that, peer prediction
 still helps in *relative* terms but is fundamentally fighting density.
 
+### Density ablation: the "non-monotonic in N" claim was a density artifact
+
+`examples/exp_multi_drone_8_low_density.yaml` — the obvious follow-up
+to the engineering takeaway above. Same N=8 / same crossing structure
+/ same Pareto-MPC config / same 30 obstacles, but world is 100×100
+instead of 60×60 (~2.8 × the area per drone, 1250 cells/drone vs 450).
+
+| density | world | per-drone | joint | indep `per^N` | Δ over indep |
+|---|---|---|---|---|---|
+| high | 60×60 | 70.0 % [64, 75] | 16.7 % [7, 34] | 5.8 % | +10.9 pp |
+| low | 100×100 | 82.1 % [77, 86] | **46.7 %** [30, 64] | 21.0 % | **+25.7 pp** |
+
+Halving density (actually 2.8 ×):
+- per-drone success +12 pp
+- joint success +30 pp
+- coordination Δ +14.8 pp (**roughly doubled**)
+
+Refines the prior finding in two ways:
+
+1. **The "non-monotonic in N" was a density artifact.** With
+   N=8 / low-density Δ at +25.7 pp — *larger* than N=4 / high-density
+   Δ at +14.7 pp — the coordination scaling law is **monotonic in N
+   when density allows**. The planner's CV peer prediction continues
+   to make better use of more peers, full stop.
+
+2. **The MPC ceiling is `density × N`, not raw N.** Doubling room
+   halved the per-drone collision rate (30 % → 18 %). The dip at
+   N=8 in the original table reflected escape-volume saturation, not
+   a fundamental coordination limit.
+
+Engineering takeaway (refined): **density × planner capacity** is the
+load-bearing axis. To deploy CV peer prediction at high N, scale the
+world or shrink drone radii — the planner itself is fine. The
+"non-monotonic" caveat from above survives only as a *density-saturated*
+regime warning, not a scaling-law claim.
+
+Methodological close: the same 2-step pattern as the mpc_chomp →
+velocity-profile → action-jump saga. Initial finding (PR #25)
+reported the surface result; follow-up ablation isolated the actual
+load-bearing axis. The first finding wasn't wrong — it was
+incomplete. Always ablate the engineering takeaway your previous YAML
+header speculated about.
+
 ## Wind miscalibration: planner belief must match sim reality
 
 `examples/exp_wind.yaml` — constant northward wind disturbance × planner
@@ -296,3 +340,37 @@ n_samples set's mean, which has small magnitude). Default is now 1.0,
 identified by the success cliff in the sweep. The right way to pick a
 default is to *measure where the success cliff is*, not to eyeball it
 from cost magnitudes — same lesson as the Pareto-config retrofit.
+
+## MPC + CHOMP smoothing: layering on a saturated planner is a wash
+
+`examples/exp_compare_mpc_chomp.yaml` — `mpc_chomp` planner wraps the
+validated Pareto MPC config and runs 15 CHOMP smoothing iterations on
+the rollout each replan, then clears `target_velocity` so the runner
+pure-pursues the smoothed waypoints. Hypothesis: file off the
+piecewise-straight corners at each replan boundary so the velocity
+profile is gentler. Same scenario / horizon / sample count as the
+plain-MPC baseline.
+
+|              | success           | plan_dt (mean) | mean &#124;Δcmd&#124;/step |
+|--------------|-------------------|---------------:|--------------:|
+| plain MPC    | 96.7 % [83, 99]   | 11.0 ms        | 0.32          |
+| **mpc + chomp** | 96.7 % [83, 99] | 18.9 ms (+71 %)| **0.61** (+90 %) |
+
+Honest null result: success rate identical, plan_dt up 71 %, and the
+per-step command delta nearly *doubles*. The reason is architectural,
+not a tuning bug. MPC's `target_velocity` bypass *is* the smoothness
+mechanism — it commits to one velocity for the whole `replan_period`
+(0.2 s = 4 control steps) so the controller has nothing to chase
+between replans and per-step `|Δcmd|` is small. CHOMP smoothing emits a
+curved waypoint sequence that pure-pursuit re-aims at every 0.05 s, so
+even though the *path* has fewer corners, the *control trajectory* has
+more direction changes.
+
+Engineering takeaway: layering a smoother on top of a planner that is
+already at its Pareto saturation point is a wash unless the smoothing
+target is downstream of where the cost lives — here the cost lives in
+the controller, not the path. To make CHOMP help in this setting you
+would need a velocity-profile-aware follower (or a planner that emits
+a velocity spline directly). Same Pareto-saturation lesson as the
+3D CHOMP+RRT result: a layer only wins if the layer below has room to
+be improved.
