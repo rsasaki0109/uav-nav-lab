@@ -130,7 +130,7 @@ Source layout:
 uav_nav_lab/
 ├── sim/         dummy_2d / dummy_3d (point-mass), airsim, ros2
 ├── scenario/    grid_world, voxel_world, multi_drone_grid
-├── planner/     astar, straight, mpc, rrt, rrt_star  (registry: PLANNER_REGISTRY)
+├── planner/     astar, straight, mpc, rrt, rrt_star, mppi  (registry: PLANNER_REGISTRY)
 ├── sensor/      perfect, delayed, kalman_delayed, lidar, pointcloud_occupancy
 ├── predictor/   constant_velocity, noisy_velocity, kalman_velocity
 ├── runner/      experiment, multi (multi-drone), sweep
@@ -145,7 +145,7 @@ Backends at a glance:
 |---|---|---|
 | sim | `dummy_2d`, `dummy_3d`, `airsim`, `ros2` | `SIM_REGISTRY` |
 | scenario | `grid_world`, `voxel_world`, `multi_drone_grid` | `SCENARIO_REGISTRY` |
-| planner | `astar`, `straight`, `mpc`, `rrt`, `rrt_star` | `PLANNER_REGISTRY` |
+| planner | `astar`, `straight`, `mpc`, `rrt`, `rrt_star`, `mppi` | `PLANNER_REGISTRY` |
 | sensor | `perfect`, `delayed`, `kalman_delayed`, `lidar`, `pointcloud_occupancy` | `SENSOR_REGISTRY` |
 | predictor | `constant_velocity`, `noisy_velocity`, `kalman_velocity` | `PREDICTOR_REGISTRY` |
 

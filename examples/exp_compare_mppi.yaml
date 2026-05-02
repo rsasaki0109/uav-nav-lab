@@ -1,0 +1,108 @@
+# MPPI head-to-head — sampling MPC's stochastic cousin. Same Dijkstra
+# cost-to-go heuristic, same n direction samples, same horizon-step
+# rollouts, same per-rollout scoring. The only substitution is at the
+# selection step: argmin → softmax-weighted average.
+#
+#   weight_i = exp(-(cost_i - cost_min) / temperature)
+#   action   = sum(weight_i * action_i)
+#
+# Tuning knob: `temperature` (λ). Low → behaves like argmin MPC; high →
+# behaves like uniform action mean (a degenerate "average of all
+# directions" → speed collapse).
+#
+# Sweep on the predictive scenario (n=30, Wilson 95 % CI):
+#
+#   temperature=0.1     96.7 % [83, 99]   |Δcmd| 0.319   avg_v 9.86  (= argmin → MPC)
+#   temperature=1.0    100.0 % [89, 100]  |Δcmd| 0.291   avg_v 9.56  ← sweet spot
+#   temperature=10.0    86.7 % [70, 95]   |Δcmd| 0.223   avg_v 2.83  (speed collapse)
+#   temperature=100.0    0.0 % [0, 11]    |Δcmd| n/a     avg_v 0.81  (catastrophic)
+#
+# Two findings:
+#
+# 1) **temperature=1.0 wins on success but ties / loses on smoothness**
+#    against MPC's tuned w_smooth=0.5 baseline (see
+#    exp_compare_mpc_smooth.yaml: 100 % / 0.244). MPPI does beat plain
+#    MPC at default w_smooth=0.05 (96.7 % / 0.32) on both axes
+#    simultaneously. So MPPI sits *between* default and tuned MPC —
+#    same Pareto saturation lesson as the mpc_chomp thread: at this
+#    saturated regime, switching planner family does not break through
+#    a tuned baseline, but it does provide a different knob (continuous
+#    temperature) for trading smoothness against success.
+#
+# 2) **The temperature knob is the value-add.** Argmin MPC has no
+#    smooth way to interpolate between "decisive" and "averaging"
+#    behavior — `w_smooth` only penalises the *jump* between consecutive
+#    chosen actions, not the *concentration* of the selection itself.
+#    At temperature=10 MPPI gets the smoothest control trajectory of
+#    any planner in the suite (|Δcmd| 0.22, -31 % vs default MPC) but
+#    pays for it with a 10 pp success drop and 71 % speed loss. This
+#    Pareto position isn't reachable from MPC's argmin family.
+#
+# Methodological note: my first attempt set the default temperature to
+# 10.0 thinking "middle of {0.1, 100}". Sweep showed that's actually in
+# the speed-collapse zone; the default is now 1.0. The right way to
+# pick a default is to *measure where the success cliff is*, not to
+# eyeball it from cost magnitudes.
+#
+# Reproduce: uav-nav run examples/exp_compare_mppi.yaml
+#            uav-nav eval results/cmp_mppi
+# Or sweep:  uav-nav sweep examples/exp_compare_mppi.yaml \
+#              --param planner.temperature=0.1,1.0,10.0,100.0
+name: cmp_mppi
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: grid_world
+  size: [50, 50]
+  start: [2.0, 2.0]
+  goal: [45.0, 45.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 25
+    seed: 7
+  dynamic_obstacles:
+    - start: [25.0, 10.0]
+      velocity: [0.0, 6.0]
+      reflect: true
+      radius: 0.8
+    - start: [10.0, 30.0]
+      velocity: [5.0, 0.0]
+      reflect: true
+      radius: 0.8
+    - start: [35.0, 25.0]
+      velocity: [-4.0, 3.0]
+      reflect: true
+      radius: 0.8
+
+simulator:
+  type: dummy_2d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: mppi
+  max_speed: 10.0
+  replan_period: 0.2
+  horizon: 20
+  dt_plan: 0.05
+  n_samples: 16
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  safety_margin: 0.5
+  use_prediction: true
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+  temperature: 1.0
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/cmp_mppi
