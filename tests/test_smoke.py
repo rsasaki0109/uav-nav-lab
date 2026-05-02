@@ -532,6 +532,161 @@ def test_video_stitch_run_produces_one_mp4_per_episode_camera(tmp_path: Path) ->
     assert saved[0].stat().st_size > 0
 
 
+def test_airsim_camera_to_video_end_to_end_via_mocks(tmp_path: Path) -> None:
+    """End-to-end: a real `AirSimBridge` (with an injected fake airsim
+    client returning *valid* PIL-encoded PNG bytes) drives `_run_episode`
+    with `frame_dir=tmp_path/frames_000`; the recorder writes those bytes
+    verbatim to disk; `stitch_run` then ffmpegs them into an MP4.
+
+    This is the only test that exercises *all three* layers
+    (bridge → runner frame writer → ffmpeg encoder) against the same
+    bytes, catching any contract drift between them."""
+    import io
+    import shutil
+    import sys
+    from types import ModuleType, SimpleNamespace
+
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not installed; skipping camera→video e2e test")
+    pil_image = pytest.importorskip("PIL.Image")
+
+    from uav_nav_lab.planner.base import Plan
+    from uav_nav_lab.runner.experiment import _run_episode
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+    from uav_nav_lab.sensor import SENSOR_REGISTRY
+    from uav_nav_lab.sim.airsim_bridge import AirSimBridge
+    from uav_nav_lab.video import stitch_run
+
+    # Build N distinct VALID PNG buffers up front so the fake client just
+    # serves them back per step. h264 needs even dimensions — 16×16 is the
+    # same size used by the pure-stitch test above.
+    def _make_png(color: tuple[int, int, int]) -> bytes:
+        buf = io.BytesIO()
+        pil_image.new("RGB", (16, 16), color=color).save(buf, format="PNG")
+        return buf.getvalue()
+
+    # 4 steps × 1 camera, varying color so the encoded video is non-trivial.
+    canned_pngs = [_make_png((i * 60, 100, 200)) for i in range(4)]
+
+    # --- inject minimal fake airsim module (mirrors the AirSim camera test) ---
+    # Bridge's `_build_image_requests` looks up every entry of its
+    # `image_type` map at module-import time on `airsim.ImageType`, so the
+    # fake must carry all of them even though we only request `scene`.
+    class _ImgType:
+        Scene = 0
+        DepthVis = 3
+        DepthPerspective = 2
+        DepthPlanar = 1
+        Segmentation = 5
+        SurfaceNormals = 6
+        Infrared = 7
+    class _ImgReq:
+        def __init__(self, camera_name, image_type, pixels_as_float, compress):  # noqa: ARG002
+            self.camera_name = camera_name
+            self.image_type = image_type
+            self.compress = compress
+    class _Vec3:
+        def __init__(self, x, y, z):
+            self.x_val, self.y_val, self.z_val = x, y, z
+    class _Pose:
+        def __init__(self, position, orientation):
+            self.position, self.orientation = position, orientation
+    fake_airsim = ModuleType("airsim")
+    fake_airsim.ImageType = _ImgType
+    fake_airsim.ImageRequest = _ImgReq
+    fake_airsim.Vector3r = _Vec3
+    fake_airsim.Pose = _Pose
+    fake_airsim.to_quaternion = lambda *_a, **_k: object()
+    saved_mod = sys.modules.get("airsim")
+    sys.modules["airsim"] = fake_airsim
+
+    try:
+        # Drive the FakeClient through 4 simGetImages() calls then collide.
+        # 4 frames is enough to verify the index→bytes mapping survives
+        # bridge→recorder→writer without becoming flaky on fast machines.
+        class FakeKin:
+            class _V:
+                x_val = 0.0; y_val = 0.0; z_val = 0.0
+            position = _V()
+            linear_velocity = _V()
+
+        class FakeClient:
+            def __init__(self) -> None:
+                self._call = 0
+            def confirmConnection(self): pass
+            def enableApiControl(self, _o, _v): pass
+            def armDisarm(self, _o, _v): pass
+            def reset(self): pass
+            def simSetVehiclePose(self, *_a, **_k): pass
+            def simPause(self, _o): pass
+            def simContinueForTime(self, _dt): pass
+            def moveByVelocityAsync(self, *_a, **_k):
+                class _F:
+                    def join(self): pass
+                return _F()
+            def getMultirotorState(self, vehicle_name=None):  # noqa: ARG002
+                return SimpleNamespace(kinematics_estimated=FakeKin())
+            def simGetCollisionInfo(self, vehicle_name=None):  # noqa: ARG002
+                # End the episode on step 4 so we get exactly 4 frames written.
+                hit = self._call >= len(canned_pngs)
+                return SimpleNamespace(has_collided=hit)
+            def simGetImages(self, requests, vehicle_name=None):  # noqa: ARG002
+                idx = min(self._call, len(canned_pngs) - 1)
+                self._call += 1
+                return [SimpleNamespace(image_data_uint8=canned_pngs[idx])]
+
+        grid_cls = SCENARIO_REGISTRY.get("grid_world")
+        sc = grid_cls.from_config(
+            {"size": [10, 10], "start": [1.0, 1.0], "goal": [9.0, 9.0],
+             "obstacles": {"type": "none"}}
+        )
+
+        bridge = AirSimBridge(
+            dt=0.05, scenario=sc, client=FakeClient(),
+            cameras=[{"name": "front_center", "image_type": "scene"}],
+        )
+
+        class StubPlanner:
+            max_speed = 1.0
+            def reset(self): pass
+            def plan(self, observation, goal, perceived_map, dynamic_obstacles=None):  # noqa: ARG002
+                wpts = np.array([observation, goal[: observation.shape[0]]])
+                return Plan(waypoints=wpts, meta={"status": "ok"})
+
+        sensor = SENSOR_REGISTRY.get("perfect").from_config({})
+        run_dir = tmp_path / "run"
+        run_dir.mkdir()
+        fdir = run_dir / "frames_000"
+
+        rec = _run_episode(
+            sim=bridge, planner=StubPlanner(), sensor=sensor,
+            seed=0, replan_period=0.05, max_steps=20, episode_index=0,
+            frame_dir=fdir,
+        )
+        # Episode terminated on the simulated collision after 4 successful
+        # camera polls; recorder+writer should have produced 4 PNGs.
+        assert rec.outcome == "collision"
+        png_files = sorted(fdir.glob("step_*_front_center.png"))
+        assert len(png_files) == 4
+        # Each on-disk PNG decodes back to the canned image of the same step.
+        for i, p in enumerate(png_files):
+            decoded = pil_image.open(p)
+            assert decoded.size == (16, 16)
+            assert decoded.getpixel((0, 0)) == (i * 60, 100, 200)
+
+        # Now stitch them into an MP4 — this is the part that catches any
+        # bytes-validity bug between the bridge layer and ffmpeg.
+        saved = stitch_run(run_dir, fps=10)
+        assert len(saved) == 1
+        assert saved[0] == run_dir / "episode_000_front_center.mp4"
+        assert saved[0].stat().st_size > 0
+    finally:
+        if saved_mod is None:
+            del sys.modules["airsim"]
+        else:
+            sys.modules["airsim"] = saved_mod
+
+
 def test_pointcloud_occupancy_marks_world_cells_from_local_points() -> None:
     """Drone at world (5, 5); lidar reports local points (1, 0, 0) and
     (-1, 1, 0) → world (6, 5) and (4, 6) → cells [6][5] and [4][6]
