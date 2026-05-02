@@ -296,6 +296,15 @@ class AirSimBridge(SimInterface):
                     _time.sleep(self.settle_after_teleport)
             except ImportError:  # pragma: no cover
                 pass
+        # Pause AirSim before returning so the drone holds its
+        # teleported pose during the (possibly multi-second) first
+        # replan. step() will simPause(False) → moveByVelocity →
+        # simContinueForTime(dt) → simPause(True), so we hand control
+        # back to the engine for exactly `dt` per call. Without this
+        # pause, an armed multirotor at altitude can drift / fall
+        # during long planner waits and trigger a t=0 collision.
+        if hasattr(client, "simPause"):
+            client.simPause(True)
         ndim = self.scenario.ndim
         self._state = SimState(t=0.0, position=start[:ndim].copy(), velocity=np.zeros(ndim))
         self._step_count = 0

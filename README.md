@@ -30,10 +30,10 @@ every example YAML carries its own validated finding.**
 <td align="center"><i>Multi-drone 3D — same coordination, 40×40×12 voxel world.</i></td>
 </tr>
 <tr>
-<td colspan="2"><img src="docs/images/demo_airsim.gif" alt="Pareto-MPC + airsim_bridge driving a SimpleFlight multirotor through Microsoft AirSim's Blocks Unreal Engine environment, with the front-center camera capturing one PNG per planner step" width="560"></td>
+<td colspan="2"><img src="docs/images/demo_airsim.gif" alt="Pareto-MPC + airsim_bridge + a 16-channel AirSim LiDAR feeding the pointcloud_occupancy sensor, driving a SimpleFlight multirotor through Microsoft AirSim's Blocks Unreal Engine env. The drone sees no obstacles in the planner's static map — it builds the occupancy grid online from LiDAR returns and weaves between cube clusters." width="560"></td>
 </tr>
 <tr>
-<td colspan="2" align="center"><i>AirSim — same Pareto-MPC + the <code>airsim_bridge</code> driving a SimpleFlight multirotor through the Blocks Unreal Engine env (FPV recording via <code>uav-nav video</code>).</i></td>
+<td colspan="2" align="center"><i>AirSim — same Pareto-MPC + <code>airsim_bridge</code>, but the planner's map is empty: a 16-channel AirSim LiDAR (<code>pointcloud_occupancy</code> sensor) builds the occupancy grid online and the drone weaves between Blocks cube clusters.</i></td>
 </tr>
 </table>
 

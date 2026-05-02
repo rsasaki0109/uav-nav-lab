@@ -63,32 +63,46 @@ def _run_experiment() -> None:
 def _frames_to_gif(
     frames_dir: Path,
     out: Path,
-    fps: int = 15,
-    width: int = 480,
+    fps: int = 12,
+    width: int = 320,
+    target_seconds: float = 5.5,
 ) -> None:
     if not frames_dir.is_dir():
         raise FileNotFoundError(f"{frames_dir} not found")
     out.parent.mkdir(parents=True, exist_ok=True)
-    # Two-pass ffmpeg: build palette then quantise. Downscale to
-    # `width` px and drop to `fps` so the GIF lands in the README's
-    # ~1–2 MB target band rather than the 8 MB raw render produces.
+    # Frame source: count PNGs to compute the speed-up factor needed
+    # to land the GIF in `target_seconds` at the chosen `fps`. The
+    # recorded flight can be 15–20 s; the README hero looks better at
+    # 5–8 s so we pick every Nth frame to compress duration without
+    # dropping resolution further.
+    n_frames = sum(1 for p in frames_dir.iterdir() if p.suffix == ".png" and "front_center" in p.name)
+    desired_frames = max(1, int(round(fps * target_seconds)))
+    keep_every = max(1, n_frames // desired_frames)
     palette = frames_dir / "_palette.png"
     pattern = str(frames_dir / "step_%04d_front_center.png")
-    scale = f"fps={fps},scale={width}:-1:flags=lanczos"
+    # `select=not(mod(n,K))` keeps every K-th frame; setpts re-stamps
+    # so playback runs at `fps` regardless of source rate.
+    vf = (
+        f"select='not(mod(n,{keep_every}))',"
+        f"setpts=N/{fps}/TB,"
+        f"scale={width}:-1:flags=lanczos"
+    )
     subprocess.run(
         ["ffmpeg", "-y", "-i", pattern,
-         "-vf", f"{scale},palettegen=stats_mode=diff",
+         "-vf", f"{vf},palettegen=stats_mode=diff",
          str(palette)],
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     subprocess.run(
         ["ffmpeg", "-y", "-i", pattern, "-i", str(palette),
-         "-lavfi", f"{scale} [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=5",
+         "-lavfi", f"{vf} [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=5",
+         "-loop", "0",
          str(out)],
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
     palette.unlink(missing_ok=True)
-    print(f"[gif] {out}  ({out.stat().st_size // 1024} KB)")
+    print(f"[gif] {out}  ({out.stat().st_size // 1024} KB)  "
+          f"({n_frames} frames @ every {keep_every}, ~{n_frames // keep_every / fps:.1f}s)")
 
 
 def main() -> int:
