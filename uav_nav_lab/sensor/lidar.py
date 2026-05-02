@@ -74,7 +74,11 @@ class LidarSensor(SensorModel):
         return obs
 
     def observe_map(
-        self, t: float, true_position: np.ndarray, true_obstacle_map: np.ndarray
+        self,
+        t: float,
+        true_position: np.ndarray,
+        true_obstacle_map: np.ndarray,
+        sim_extra: Mapping[str, Any] | None = None,  # noqa: ARG002
     ) -> np.ndarray:
         occ = np.asarray(true_obstacle_map, dtype=bool)
         ndim = occ.ndim

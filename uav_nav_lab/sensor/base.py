@@ -28,13 +28,20 @@ class SensorModel(ABC):
     def observe(self, t: float, true_position: np.ndarray) -> np.ndarray: ...
 
     def observe_map(
-        self, t: float, true_position: np.ndarray, true_obstacle_map: np.ndarray
+        self,
+        t: float,
+        true_position: np.ndarray,
+        true_obstacle_map: np.ndarray,
+        sim_extra: Mapping[str, Any] | None = None,
     ) -> np.ndarray:
         """Return the perceived obstacle map.
 
         Default: passthrough — the planner sees the full map. Range-limited
         sensors (lidar / depth) override this to return what the sensor has
-        actually observed up to time t.
+        actually observed up to time t. `sim_extra` carries side-channel
+        sensor data the simulator backend wants to surface (e.g. AirSim's
+        per-step LiDAR point cloud at `sim_extra["lidar_points"][name]`);
+        sensors that do not consume it can ignore the kwarg.
         """
         return true_obstacle_map
 

@@ -153,7 +153,10 @@ def run_episode_multi(
                 continue
             if plans[i] is None or (t - last_replan_t[i]) >= replan_period:
                 t0 = time.perf_counter()
-                perceived_map = sensors[i].observe_map(t, states[i].position, sims[i].obstacle_map)
+                perceived_map = sensors[i].observe_map(
+                    t, states[i].position, sims[i].obstacle_map,
+                    sim_extra=states[i].extra or None,
+                )
                 scenario_dyn = scenario.dynamic_obstacles
                 peer_dyn = _peers_view(states, radii, finished, me=i)
                 # Filter through the sensor — a range-limited sensor will

@@ -96,7 +96,12 @@ def _run_episode(
 
         if plan is None or (t - last_replan_t) >= replan_period:
             t0 = time.perf_counter()
-            perceived_map = sensor.observe_map(t, state.position, sim.obstacle_map)
+            # `sim_extra` lets backend-attached sensors (e.g. pointcloud_occupancy
+            # consuming AirSim LiDAR returns) read side-channel data without
+            # going through the scenario's ground-truth occupancy.
+            perceived_map = sensor.observe_map(
+                t, state.position, sim.obstacle_map, sim_extra=state.extra or None
+            )
             perceived_dyn = sensor.observe_dynamics(
                 t, state.position, sim.scenario.dynamic_obstacles
             )

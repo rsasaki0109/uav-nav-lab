@@ -124,7 +124,7 @@ uav_nav_lab/
 ├── sim/         dummy_2d / dummy_3d (point-mass), airsim, ros2
 ├── scenario/    grid_world, voxel_world, multi_drone_grid
 ├── planner/     astar, straight, mpc, rrt, rrt_star  (registry: PLANNER_REGISTRY)
-├── sensor/      perfect, delayed, kalman_delayed, lidar
+├── sensor/      perfect, delayed, kalman_delayed, lidar, pointcloud_occupancy
 ├── predictor/   constant_velocity, noisy_velocity, kalman_velocity
 ├── runner/      experiment, multi (multi-drone), sweep
 ├── eval/        metrics (Wilson + SEM CIs), compare
@@ -139,7 +139,7 @@ Backends at a glance:
 | sim | `dummy_2d`, `dummy_3d`, `airsim`, `ros2` | `SIM_REGISTRY` |
 | scenario | `grid_world`, `voxel_world`, `multi_drone_grid` | `SCENARIO_REGISTRY` |
 | planner | `astar`, `straight`, `mpc`, `rrt`, `rrt_star` | `PLANNER_REGISTRY` |
-| sensor | `perfect`, `delayed`, `kalman_delayed`, `lidar` | `SENSOR_REGISTRY` |
+| sensor | `perfect`, `delayed`, `kalman_delayed`, `lidar`, `pointcloud_occupancy` | `SENSOR_REGISTRY` |
 | predictor | `constant_velocity`, `noisy_velocity`, `kalman_velocity` | `PREDICTOR_REGISTRY` |
 
 Adding a new backend is one new file with a `@REGISTRY.register("name")`
@@ -417,7 +417,7 @@ sounds fanciest — the framework is built to make that picking trivial.
 
 - **v0.1.0** released, 42 tests, GitHub Actions CI on Python 3.10 / 3.11 / 3.12
   + a CLI smoke job.
-- **5 sensor backends** (`perfect`, `delayed`, `kalman_delayed`, `lidar`),
+- **5 sensor backends** (`perfect`, `delayed`, `kalman_delayed`, `lidar`, `pointcloud_occupancy`),
   **3 predictor backends** (`constant_velocity`, `noisy_velocity`,
   `kalman_velocity`), **5 planners** (`astar`, `straight`, `mpc`, `rrt`, `rrt_star`),
   **3 scenarios** (`grid_world`, `voxel_world`, `multi_drone_grid`).
@@ -435,9 +435,10 @@ External backends:
   CI-testable without an AirSim install. Optional `lidars: [name, …]`
   in the simulator config polls `getLidarData(name)` per step and
   exposes the (N, 3) ENU point cloud at
-  `state.extra["lidar_points"][name]` — point-cloud → occupancy
-  rasterization is left to consumer code so this bridge stays
-  perception-agnostic.
+  `state.extra["lidar_points"][name]`. Pair with the
+  `pointcloud_occupancy` sensor (`type: pointcloud_occupancy` in the
+  sensor block) to rasterize those returns into the planner's
+  occupancy grid; the bridge itself stays perception-agnostic.
 - **ROS 2** (`uav_nav_lab/sim/ros2_bridge.py`) is wired end-to-end —
   publishes `geometry_msgs/Twist` on `/cmd_vel`, subscribes to
   `nav_msgs/Odometry` on `/odom` (and optional `std_msgs/Bool` on
