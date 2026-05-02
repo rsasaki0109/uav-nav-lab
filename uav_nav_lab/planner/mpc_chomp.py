@@ -47,6 +47,7 @@ class MPCChompPlanner(Planner):
         max_step_norm: float = 1.0,
         w_smooth: float = 1.0,
         w_obs: float = 5.0,
+        w_action_jump: float = 0.0,
         epsilon: float = 2.0,
         smooth_resolution: float = 1.0,
         smooth_inflate: int = 0,
@@ -59,6 +60,17 @@ class MPCChompPlanner(Planner):
         self.max_step_norm = float(max_step_norm)
         self.w_smooth = float(w_smooth)
         self.w_obs = float(w_obs)
+        # Penalises (vel[0] - prev_emitted_velocity)² inside CHOMP descent,
+        # where vel[0] = (x[1] - x[0]) / dt_plan. Active only when the
+        # planner has a previous emission to reference (so the first replan
+        # of an episode is unconstrained). Designed for `output:
+        # velocity_profile` mode; for `output: waypoints` it just makes the
+        # smoothed first segment match the previous initial velocity, which
+        # is mostly cosmetic since pure-pursuit ignores the velocity. PR
+        # #21 / #22's null result identified the replan-boundary jump as
+        # the candidate load-bearing factor — this knob is the direct
+        # ablation of that hypothesis.
+        self.w_action_jump = float(w_action_jump)
         self.epsilon = float(epsilon)
         self.smooth_resolution = float(smooth_resolution)
         self.smooth_inflate = int(smooth_inflate)
@@ -67,6 +79,13 @@ class MPCChompPlanner(Planner):
                 f"output must be 'waypoints' or 'velocity_profile'; got {output!r}"
             )
         self.output = output
+        # Last emitted vel[0] — used as the reference for w_action_jump.
+        # Reset to None at episode start. Approximation: assumes the
+        # controller is still on the previous profile's first sample at
+        # replan time; for replan_period ≈ 1-2 dt_plan this is close, for
+        # larger gaps the controller has already moved ahead but vel[0]
+        # is still the cleanest reference signal the planner has access to.
+        self._prev_emitted_velocity: np.ndarray | None = None
         # Hessian cache keyed by trajectory length; MPC rollouts vary in
         # length when a sample reaches the goal mid-horizon.
         self._K_cache: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
@@ -85,6 +104,7 @@ class MPCChompPlanner(Planner):
             max_step_norm=float(cfg.get("max_step_norm", 1.0)),
             w_smooth=float(cfg.get("w_smooth", 1.0)),
             w_obs=float(cfg.get("w_obs", 5.0)),
+            w_action_jump=float(cfg.get("w_action_jump", 0.0)),
             epsilon=float(cfg.get("epsilon", 2.0)),
             smooth_resolution=float(cfg.get("smooth_resolution", 1.0)),
             smooth_inflate=int(cfg.get("smooth_inflate", 0)),
@@ -93,6 +113,7 @@ class MPCChompPlanner(Planner):
 
     def reset(self) -> None:
         self._mpc.reset()
+        self._prev_emitted_velocity = None
 
     def _hessians(self, n: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         cached = self._K_cache.get(n)
@@ -138,6 +159,23 @@ class MPCChompPlanner(Planner):
         occ = inflate_obstacles(occ_raw, self.smooth_inflate)
         dist = _distance_field(occ, self.smooth_resolution, cap=2.0 * self.epsilon)
 
+        # Action-jump cost contribution. Cost = w_jump · ||(x[1] - x[0])/dt
+        # - prev_emitted||²; gradient w.r.t. x[1] is
+        #   2 · w_jump · ((x[1] - x[0])/dt² - prev_emitted/dt).
+        # x[1] is the *first* interior waypoint, so this term enters
+        # grad_int[0]. Active only when prev_emitted is known and the
+        # weight is non-zero.
+        dt_plan = float(self._mpc.dt_plan)
+        use_jump_cost = (
+            self.w_action_jump > 0.0
+            and self._prev_emitted_velocity is not None
+            and n >= 3
+        )
+        prev_v = (
+            np.asarray(self._prev_emitted_velocity, dtype=float)[:ndim]
+            if use_jump_cost else None
+        )
+
         for _ in range(self.n_smooth_iters):
             _c, grad_obs = _obstacle_cost_and_grad(
                 x, dist, self.epsilon, self.smooth_resolution
@@ -146,6 +184,11 @@ class MPCChompPlanner(Planner):
             grad_int = (
                 self.w_smooth * grad_smooth_int + self.w_obs * grad_obs[1:-1]
             )
+            if use_jump_cost:
+                vel0 = (x[1] - x[0]) / dt_plan
+                grad_int[0] = grad_int[0] + (2.0 * self.w_action_jump / dt_plan) * (
+                    vel0 - prev_v
+                )
             step = self.learning_rate * (K_int_inv @ grad_int)
             step_norms = np.linalg.norm(step, axis=1, keepdims=True)
             scale = np.minimum(
@@ -171,6 +214,9 @@ class MPCChompPlanner(Planner):
             dt = float(self._mpc.dt_plan)
             full = np.vstack([np.atleast_2d(x[0]), smoothed])  # (n, ndim)
             vel = np.diff(full, axis=0) / dt                    # (n-1, ndim)
+            # Cache for the next replan's action-jump cost reference.
+            self._prev_emitted_velocity = vel[0].copy()
+            meta["w_action_jump"] = self.w_action_jump
             return Plan(
                 waypoints=smoothed,
                 target_velocity=None,

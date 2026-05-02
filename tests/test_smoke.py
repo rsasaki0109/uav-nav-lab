@@ -1484,6 +1484,54 @@ def test_follow_plan_velocity_profile_indexed_by_elapsed_time() -> None:
                        [0.5, 0.0])
 
 
+def test_mpc_chomp_w_action_jump_meta_and_round_trip() -> None:
+    """w_action_jump round-trips through from_config, surfaces in meta on
+    velocity_profile emit, and is accepted as a non-zero default. (The
+    knob's *empirical effect* on smoothness is documented in the YAML
+    header as a negative result — it modifies x[1] but the smoothness
+    Hessian's neighbour coupling reverses the gain at sample 1.)"""
+    from uav_nav_lab.planner import PLANNER_REGISTRY
+
+    p = PLANNER_REGISTRY.get("mpc_chomp").from_config(
+        {
+            "max_speed": 5.0,
+            "w_action_jump": 0.5,
+            "output": "velocity_profile",
+            "mpc": {"horizon": 20, "dt_plan": 0.05, "n_samples": 8, "max_speed": 5.0},
+        }
+    )
+    assert p.w_action_jump == 0.5
+    occ = np.zeros((20, 20), dtype=bool)
+    plan = p.plan(np.array([2.0, 2.0]), np.array([18.0, 18.0]), occ)
+    assert plan.meta["w_action_jump"] == 0.5
+
+
+def test_mpc_chomp_w_action_jump_only_active_after_first_replan() -> None:
+    """Episode-start replan has prev_emitted=None so the jump cost is
+    inactive — otherwise the first plan of every episode would be biased
+    by stale state. Tests the dispatch guard and the reset() hook clearing
+    the cache."""
+    from uav_nav_lab.planner import PLANNER_REGISTRY
+
+    occ = np.zeros((20, 20), dtype=bool)
+    p = PLANNER_REGISTRY.get("mpc_chomp").from_config(
+        {
+            "max_speed": 5.0,
+            "n_smooth_iters": 5,
+            "w_action_jump": 100.0,  # huge — would dominate if active
+            "output": "velocity_profile",
+            "mpc": {"horizon": 20, "dt_plan": 0.05, "n_samples": 8, "max_speed": 5.0},
+        }
+    )
+    plan1 = p.plan(np.array([2.0, 2.0]), np.array([18.0, 18.0]), occ)
+    # First plan: prev was None, cache populated at emit time.
+    assert p._prev_emitted_velocity is not None
+    assert np.allclose(p._prev_emitted_velocity, plan1.velocity_profile[0])
+    # reset() must clear the cache so a new episode starts unbiased.
+    p.reset()
+    assert p._prev_emitted_velocity is None
+
+
 def test_follow_plan_velocity_profile_takes_priority_over_target_velocity() -> None:
     """If both velocity_profile and target_velocity are set on the same
     Plan, the profile must win — it's the more-specific signal. Regression

@@ -20,6 +20,7 @@ Wilson 95 % intervals on rates, mean ± 1.96·SEM on continuous metrics.
 - [Wind miscalibration: planner belief must match sim reality](#wind-miscalibration-planner-belief-must-match-sim-reality)
 - [The perception-latency cliff: a four-step research saga](#the-perception-latency-cliff-a-four-step-research-saga)
 - [MPC + CHOMP smoothing: layering on a saturated planner is a wash](#mpc--chomp-smoothing-layering-on-a-saturated-planner-is-a-wash)
+- [Action-jump cost: tuning the existing knob beats every layer](#action-jump-cost-tuning-the-existing-knob-beats-every-layer)
 
 ## MPC compute Pareto
 
@@ -305,3 +306,77 @@ velocity bypass isn't a layering opportunity, it's the controller-side
 ceiling. Help would need either CHOMP-on-velocity-sequence (smoothing
 the right object) or a replan-boundary-aware cost (penalise jump from
 previous applied velocity), neither of which is just "add a smoother".
+
+## Action-jump cost: tuning the existing knob beats every layer
+
+`examples/exp_compare_mpc_smooth.yaml` — the third installment of the
+mpc_chomp / velocity-profile thread. The PR #21 / #22 null results both
+identified `w_smooth · |action - prev_action|` (already present in
+`SamplingMPCPlanner.plan`) as the load-bearing factor for plain MPC's
+good control-trajectory smoothness. This finding tests the obvious
+follow-up hypothesis: the right architectural fix is just *tune that
+knob*, not add a smoothing layer above it.
+
+Sweeping `planner.w_smooth` on the predictive scenario (n=30, Wilson
+95 % CI, default = 0.05):
+
+|     `w_smooth`     | success         | mean &#124;Δcmd&#124;/step |
+|--------------------|-----------------|--------------:|
+| 0.05 (current default) | 96.7 % [83, 99] | 0.320 |
+| **0.5** (sweet spot) | **100.0 %** [89, 100] | **0.244** (-24 %) |
+| 5.0 | 96.7 % [83, 99] | 0.245 |
+| 50.0 (over-tuned) | 83.3 % [66, 93] | 0.183 (over-smoothed: +16.7 % collisions) |
+
+`w_smooth = 0.5` wins on **both axes simultaneously** — success +3.3 pp
+*and* |Δcmd| -24 %. Cranking past the sweet spot trades success for
+further smoothness; at `w_smooth = 50` the planner refuses obstacle
+maneuvers (16.7 % collision rate) but the smoothest trajectories of
+any cell.
+
+**Does the same fix transfer to the wrapper?** No — and the *reason* is
+itself instructive. `mpc_chomp` exposes a `w_action_jump` that adds the
+same cost form `||(x[1]-x[0])/dt - prev_emitted_velocity||²` directly to
+the CHOMP descent. Swept on `output: velocity_profile` mode (with inner
+MPC `w_smooth=0.5` already set):
+
+|     `w_action_jump`     | success         | mean &#124;Δcmd&#124;/step |
+|-------------------------|-----------------|--------------:|
+| 0.0  | 93.3 % [78, 99] | 1.73 |
+| 0.5  | 86.7 % [70, 95] | 6.87 |
+| 5.0  | 93.3 % [78, 99] | 7.13 |
+| 50.0 | 90.0 % [74, 96] | 7.18 |
+
+The knob makes things drastically *worse*. Mechanism (verified by
+single-iteration debug trace): the jump-cost gradient at index 0 is
+~10⁶ in magnitude (proportional to `w_action_jump · |vel0 - prev|/dt²`).
+After M⁻¹ preconditioning and per-row `max_step_norm` cap, x[1]
+oscillates between two states each iter — pulled toward `(x[0] +
+prev*dt)`, then yanked back by the smoothness Hessian's coupling.
+Every other iter the optimizer is back where it started, but the
+intermediate state has poisoned the smoothness terms enough to leave
+neighbour waypoints displaced. The cap that keeps CHOMP stable for
+plain trajectory smoothing actively prevents the constraint from
+settling.
+
+Two architectural lessons:
+1. **The right place for action-jump cost is at the planner's argmin
+   step**, not as a soft pull on a single waypoint. Plain MPC's
+   constant-velocity-per-rollout means w_smooth · |v - prev_action|
+   either wins the rollout or loses it — clean discrete choice.
+   CHOMP's gradient descent has no such cleanness; the cap-and-Hessian
+   interaction kills the constraint.
+2. **Tuning beats layering** in this regime. Three PRs of new
+   infrastructure (smoothing wrapper, velocity profile follower,
+   CHOMP-side jump cost) confirmed the architectural insight and
+   none of them beat changing one number in the existing planner.
+   Same Pareto-saturation lesson the 3D CHOMP+RRT result taught:
+   when the foundation is well-tuned, the cheapest fix is to look
+   for an existing knob that's under-tuned.
+
+Methodological close: the saga from PR #21 → #22 → this YAML is the
+framework's intended workflow in miniature. Each null result named a
+specific hypothesis; each hypothesis was tested by *building the fix
+and measuring*; each test produced a quantitative result that either
+killed the hypothesis or moved the question one layer deeper. Three
+PRs of code, two null results, and one quantified win — that's the
+shape of honest research.
