@@ -1,0 +1,104 @@
+# MPC + CHOMP smoothing — wraps the validated Pareto MPC config (see
+# exp_compare_mpc.yaml) and runs a few CHOMP smoothing iterations on the
+# rollout each replan, then forces pure-pursuit on the smoothed waypoints
+# (target_velocity is cleared by the wrapper, since otherwise smoothing
+# would be cosmetic — the runner would just apply MPC's constant action).
+#
+# Hypothesis: "file off the corner at each replan boundary so the
+# velocity profile is gentler" — trade a bit of plan_dt for a smoother
+# acceleration profile at equivalent success rate.
+#
+# Measured (50×50, n=30 episodes, dynamic obstacles, Wilson 95 % CI):
+#   plain MPC      96.7 %  [83.3, 99.4]   plan_dt 11.0 ms   |Δcmd| 0.32
+#   mpc + chomp    96.7 %  [83.3, 99.4]   plan_dt 18.9 ms   |Δcmd| 0.61
+#
+# Honest null result: success identical, plan_dt +71 %, and per-step
+# command delta nearly *doubles*. The reason is the architectural one,
+# not a tuning bug — MPC's bypass-of-pure-pursuit *is* the smoothness
+# feature: it commits to one velocity for the whole replan_period
+# (0.2 s = 4 control steps) and the controller has nothing to chase
+# between replans, so per-step |Δcmd| is small. CHOMP smoothing produces
+# a curved waypoint sequence that pure-pursuit re-aims at every 0.05 s,
+# so even though the *path* has fewer corners, the *control trajectory*
+# has more direction changes. Layering CHOMP on a constant-velocity MPC
+# is fighting the architecture; the smoothing payoff would need a
+# velocity-profile-aware follower (or a planner that emits a velocity
+# spline directly). Filed as a Pareto-saturation finding alongside
+# CHOMP+RRT in 3D — adding a layer only wins if the layer below has
+# room to be improved, and this MPC config doesn't.
+#
+# Reproduce: uav-nav run examples/exp_compare_mpc_chomp.yaml
+#            uav-nav eval results/cmp_mpc_chomp
+name: cmp_mpc_chomp
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: grid_world
+  size: [50, 50]
+  start: [2.0, 2.0]
+  goal: [45.0, 45.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 25
+    seed: 7
+  dynamic_obstacles:
+    - start: [25.0, 10.0]
+      velocity: [0.0, 6.0]
+      reflect: true
+      radius: 0.8
+    - start: [10.0, 30.0]
+      velocity: [5.0, 0.0]
+      reflect: true
+      radius: 0.8
+    - start: [35.0, 25.0]
+      velocity: [-4.0, 3.0]
+      reflect: true
+      radius: 0.8
+
+simulator:
+  type: dummy_2d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: mpc_chomp
+  max_speed: 10.0
+  replan_period: 0.2
+  # Smoothing pass — 15 iters at lr=0.05 with M⁻¹ preconditioning is
+  # enough to round off MPC's piecewise-straight rollout corners without
+  # the gradient pulling waypoints into nearby obstacles. w_obs is non-zero
+  # so the smoothing respects the static obstacle field.
+  n_smooth_iters: 15
+  learning_rate: 0.05
+  max_step_norm: 1.0
+  w_smooth: 1.0
+  w_obs: 5.0
+  epsilon: 2.0
+  smooth_resolution: 1.0
+  smooth_inflate: 1
+  # Inner MPC config — same as exp_compare_mpc.yaml so the difference is
+  # solely the CHOMP post-processing.
+  mpc:
+    max_speed: 10.0
+    horizon: 20
+    dt_plan: 0.05
+    n_samples: 16
+    resolution: 1.0
+    inflate: 1
+    goal_radius: 1.5
+    safety_margin: 0.5
+    use_prediction: true
+    w_goal: 1.0
+    w_obs: 100.0
+    w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/cmp_mpc_chomp

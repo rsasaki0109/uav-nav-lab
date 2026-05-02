@@ -1,0 +1,84 @@
+# Planner head-to-head — CHOMP (gradient-based trajectory smoothing) on the
+# predictive scenario. Same layout as exp_compare_{straight,astar,rrt,rrt_star,mpc}
+# so results stack into the README's planner table.
+#
+# CHOMP optimises a fixed-length sequence of waypoints from a straight-line
+# init by descending a smoothness + obstacle potential under M⁻¹-preconditioned
+# steps (see uav_nav_lab/planner/chomp.py for the math). Pair with a short
+# replan_period so the optimiser gets a fresh init each cycle — that is the
+# closest analogue CHOMP has to RRT's probabilistic completeness.
+#
+# Measured (50×50, n=30 episodes, dynamic obstacles, Wilson 95 % CI):
+#   straight    0.0 %  [0.0, 11.4]    plan_dt 0.04 / 0.05 ms
+#   astar      20.0 %  [9.5,  37.3]   plan_dt 4.75 / 8.97 ms
+#   rrt*       23.3 %  [11.8, 40.9]   plan_dt 464 / 521 ms ⚠
+#   chomp      53.3 %  [36.1, 69.8]   plan_dt 21.31 / 22.31 ms   ← this file
+#   rrt        73.3 %  [55.5, 85.8]   plan_dt 29.99 / 64.27 ms
+#   mpc       100.0 %  [88.6, 100.0]  plan_dt 52.16 / 56.96 ms
+# CHOMP slots middle-of-pack and is the *cheapest* non-trivial planner of
+# the lot — 21 ms / replan, p95 22 ms, beating every alternative on
+# compute. The smoothness term keeps trajectories short and tight (47.6 ±
+# 8.2 m), but local optimisation cannot tunnel through obstacles the
+# straight-line init crosses, and dynamic obstacles passing the path
+# during a replan window can trap the optimiser between two of them.
+# Reading: high value when compute is the bottleneck (cheap, smooth);
+# RRT init might lift the success rate further — see the roadmap.
+#
+# Reproduce: uav-nav run examples/exp_compare_chomp.yaml
+#            uav-nav eval results/cmp_chomp
+name: cmp_chomp
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: grid_world
+  size: [50, 50]
+  start: [2.0, 2.0]
+  goal: [45.0, 45.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 25
+    seed: 7
+  dynamic_obstacles:
+    - start: [25.0, 10.0]
+      velocity: [0.0, 6.0]
+      reflect: true
+      radius: 0.8
+    - start: [10.0, 30.0]
+      velocity: [5.0, 0.0]
+      reflect: true
+      radius: 0.8
+    - start: [35.0, 25.0]
+      velocity: [-4.0, 3.0]
+      reflect: true
+      radius: 0.8
+
+simulator:
+  type: dummy_2d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: chomp
+  max_speed: 10.0
+  replan_period: 0.2
+  n_waypoints: 30
+  n_iters: 100
+  learning_rate: 0.05
+  max_step_norm: 1.0
+  w_smooth: 1.0
+  w_obs: 5.0
+  epsilon: 2.0
+  resolution: 1.0
+  inflate: 1
+  goal_tolerance: 1.5
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/cmp_chomp
