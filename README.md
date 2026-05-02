@@ -29,6 +29,12 @@ every example YAML carries its own validated finding.**
 <td align="center"><i>Multi-drone 2D — 4 drones cross-crossing via CV peer prediction.</i></td>
 <td align="center"><i>Multi-drone 3D — same coordination, 40×40×12 voxel world.</i></td>
 </tr>
+<tr>
+<td colspan="2"><img src="docs/images/demo_airsim.gif" alt="Pareto-MPC + airsim_bridge driving a SimpleFlight multirotor through Microsoft AirSim's Blocks Unreal Engine environment, with the front-center camera capturing one PNG per planner step" width="560"></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><i>AirSim — same Pareto-MPC + the <code>airsim_bridge</code> driving a SimpleFlight multirotor through the Blocks Unreal Engine env (FPV recording via <code>uav-nav video</code>).</i></td>
+</tr>
 </table>
 
 </div>
@@ -291,7 +297,9 @@ External backends:
   Optional `cameras: [{name, image_type}, …]` polls `simGetImages()`
   and stashes compressed PNG bytes at `state.extra["camera_images"][name]`;
   set `output.save_camera_frames: true` and run `uav-nav video <run_dir>`
-  to ffmpeg them into per-episode / per-camera MP4 demo reels. Optional
+  to ffmpeg them into per-episode / per-camera MP4 demo reels (see
+  `examples/exp_airsim_demo.yaml` + `scripts/record_airsim_demo.py`
+  for the README hero GIF pipeline). Optional
   `depths: [{name, fov_deg, width, height}, …]` polls the same call
   with `pixels_as_float=True` and surfaces a `{depth, intrinsics}`
   payload at `state.extra["depth_images"][name]` — pair with
