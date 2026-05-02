@@ -17,16 +17,35 @@ from ..sensor import SENSOR_REGISTRY
 from ..sim import SIM_REGISTRY
 
 
-def _follow_plan(plan: Plan, observation: np.ndarray, max_speed: float) -> np.ndarray:
+def _follow_plan(
+    plan: Plan,
+    observation: np.ndarray,
+    max_speed: float,
+    *,
+    t_since_replan: float = 0.0,
+) -> np.ndarray:
     """Convert a Plan into a velocity setpoint.
 
-    If the planner already chose a velocity (e.g. MPC), apply it directly.
-    Otherwise run pure-pursuit on the waypoint sequence:
-      1. project observation onto the plan via the closest waypoint
-      2. walk forward to the first waypoint at least `lookahead` away
+    Three modes, in priority order:
+      1. `velocity_profile` set — index by elapsed-since-replan time, return
+         that bin's velocity. Lets smoothing planners track a varying
+         velocity instead of a single constant.
+      2. `target_velocity` set (e.g. MPC) — apply it directly.
+      3. else — pure-pursuit on `waypoints`:
+         a. project observation onto the plan via the closest waypoint
+         b. walk forward to the first waypoint at least `lookahead` away
     Lookahead scales with speed so high-speed runs do not chase points that
     have already been overtaken due to sensor lag / noise.
     """
+    if plan.velocity_profile is not None and plan.profile_dt is not None:
+        prof = np.asarray(plan.velocity_profile, dtype=float)
+        if prof.shape[0] > 0:
+            idx = int(np.clip(t_since_replan / float(plan.profile_dt), 0, prof.shape[0] - 1))
+            v = prof[idx]
+            n = float(np.linalg.norm(v))
+            if n > max_speed:
+                v = v * (max_speed / n)
+            return v
     if plan.target_velocity is not None:
         v = np.asarray(plan.target_velocity, dtype=float).ravel()
         n = float(np.linalg.norm(v))
@@ -119,7 +138,10 @@ def _run_episode(
             last_replan_t = t
             rec.log_replan(t=t, plan_length=int(plan.waypoints.shape[0]), planner_dt_ms=planner_dt_ms)
 
-        cmd = _follow_plan(plan, observation, planner.max_speed)
+        cmd = _follow_plan(
+            plan, observation, planner.max_speed,
+            t_since_replan=float(t - last_replan_t),
+        )
         next_state, info = sim.step(cmd)
 
         # `sim_extra` carries any side-channel data the sim backend wants

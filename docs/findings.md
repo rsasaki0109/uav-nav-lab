@@ -267,3 +267,41 @@ would need a velocity-profile-aware follower (or a planner that emits
 a velocity spline directly). Same Pareto-saturation lesson as the
 3D CHOMP+RRT result: a layer only wins if the layer below has room to
 be improved.
+
+### Follow-up: the velocity-profile-aware follower doesn't rescue it either
+
+`examples/exp_compare_mpc_chomp_vprofile.yaml` — the natural fix the
+above takeaway points at: extend `Plan` with a time-indexed
+`velocity_profile`, add a velocity-tracking mode to the runner's
+follower, and have `mpc_chomp` derive per-step velocities from the
+smoothed path (forward differences / `dt_plan`) instead of emitting
+waypoints. Same scenario, same MPC inner config:
+
+|                          | success         | plan_dt | mean &#124;Δcmd&#124;/step |
+|--------------------------|-----------------|--------:|--------------:|
+| plain MPC                | 96.7 % [83, 99] | 11.0 ms | 0.32          |
+| mpc + chomp (waypoints)  | 96.7 % [83, 99] | 18.9 ms | 0.61          |
+| **mpc + chomp (vprofile)** | **90.0 %** [74, 96] | 21.3 ms | **2.02** |
+
+Worse on every axis: success drops 6.7 pp, |Δcmd| jumps to **6.3 ×
+plain MPC**. Two effects compound:
+
+1. **Per-step profile updates.** Plain MPC keeps `target_velocity`
+   constant over the whole `replan_period` (0.2 s = 4 control steps).
+   The profile entry changes every 0.05 s, so even a smooth-by-
+   construction velocity sequence has |Δcmd| bounded below by the
+   path curvature.
+2. **Replan-boundary discontinuities.** Each replan re-runs CHOMP from
+   the new initial position; the first velocity of the new profile is
+   freshly derived and jumps from the last applied velocity. Plain MPC
+   has the same boundary, but `w_smooth · |Δaction|` penalises it in
+   the rollout score; the profile derivative is unconstrained.
+
+Methodological lesson: when a null result names a "missing piece"
+(here: velocity-profile-aware follower), build the missing piece and
+re-test before declaring the architectural insight sound. In this case
+the deeper insight is *also* sound — and now stronger: the constant-
+velocity bypass isn't a layering opportunity, it's the controller-side
+ceiling. Help would need either CHOMP-on-velocity-sequence (smoothing
+the right object) or a replan-boundary-aware cost (penalise jump from
+previous applied velocity), neither of which is just "add a smoother".

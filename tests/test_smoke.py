@@ -1413,6 +1413,92 @@ def test_mpc_chomp_registry_and_from_config_round_trip() -> None:
     assert p.max_speed == 7.0
     assert p.n_smooth_iters == 5
     assert p.w_obs == 3.0
+    assert p.output == "waypoints"  # default
+
+
+def test_mpc_chomp_velocity_profile_output_shape_and_dt() -> None:
+    """`output: velocity_profile` must emit a (T, ndim) profile aligned to
+    the MPC's dt_plan grid: one velocity per smoothed waypoint, each
+    representing the displacement traveled in one dt_plan tick. T equals
+    the smoothed waypoint count (forward differences from the obs+wps stack
+    yield exactly len(waypoints) velocities)."""
+    from uav_nav_lab.planner import PLANNER_REGISTRY
+
+    occ = np.zeros((20, 20), dtype=bool)
+    p = PLANNER_REGISTRY.get("mpc_chomp").from_config(
+        {
+            "max_speed": 5.0,
+            "n_smooth_iters": 5,
+            "output": "velocity_profile",
+            "mpc": {"horizon": 20, "dt_plan": 0.05, "n_samples": 8, "max_speed": 5.0},
+        }
+    )
+    plan = p.plan(np.array([1.0, 1.0]), np.array([18.0, 18.0]), occ)
+    assert plan.velocity_profile is not None
+    assert plan.profile_dt == pytest.approx(0.05)
+    assert plan.velocity_profile.shape == (plan.waypoints.shape[0], 2)
+    # Must clear target_velocity so the runner picks the profile path.
+    assert plan.target_velocity is None
+    # Profile speeds within the planner's max_speed (no negative-step glitch).
+    speeds = np.linalg.norm(plan.velocity_profile, axis=1)
+    assert float(speeds.max()) <= 5.0 + 1e-6
+
+
+def test_mpc_chomp_velocity_profile_invalid_output_raises() -> None:
+    """Typo in `output` must fail loud at construction, mirroring the
+    `init` validation in the inner CHOMP planner."""
+    from uav_nav_lab.planner import PLANNER_REGISTRY
+
+    with pytest.raises(ValueError, match="output must be"):
+        PLANNER_REGISTRY.get("mpc_chomp").from_config(
+            {"output": "spline", "mpc": {"horizon": 10, "n_samples": 4}}
+        )
+
+
+def test_follow_plan_velocity_profile_indexed_by_elapsed_time() -> None:
+    """The runner's `_follow_plan` must pick the profile bin that matches
+    `t_since_replan / profile_dt` and clip past the end. This is the
+    machinery that lets a smoothing planner drive a varying velocity
+    instead of one constant target_velocity."""
+    from uav_nav_lab.planner.base import Plan
+    from uav_nav_lab.runner.experiment import _follow_plan
+
+    profile = np.array([[1.0, 0.0], [0.0, 1.0], [-1.0, 0.0]])
+    plan = Plan(
+        waypoints=np.zeros((3, 2)),
+        velocity_profile=profile,
+        profile_dt=0.1,
+    )
+    obs = np.array([0.0, 0.0])
+    # t=0 → bin 0
+    assert np.allclose(_follow_plan(plan, obs, max_speed=5.0, t_since_replan=0.0),
+                       [1.0, 0.0])
+    # t=0.15 → bin 1 (floor)
+    assert np.allclose(_follow_plan(plan, obs, max_speed=5.0, t_since_replan=0.15),
+                       [0.0, 1.0])
+    # t past end → clip to last bin
+    assert np.allclose(_follow_plan(plan, obs, max_speed=5.0, t_since_replan=10.0),
+                       [-1.0, 0.0])
+    # max_speed cap still applies (profile entry is unit norm; cap=0.5 halves it)
+    assert np.allclose(_follow_plan(plan, obs, max_speed=0.5, t_since_replan=0.0),
+                       [0.5, 0.0])
+
+
+def test_follow_plan_velocity_profile_takes_priority_over_target_velocity() -> None:
+    """If both velocity_profile and target_velocity are set on the same
+    Plan, the profile must win — it's the more-specific signal. Regression
+    guard for the dispatch order in `_follow_plan`."""
+    from uav_nav_lab.planner.base import Plan
+    from uav_nav_lab.runner.experiment import _follow_plan
+
+    plan = Plan(
+        waypoints=np.zeros((1, 2)),
+        target_velocity=np.array([5.0, 0.0]),
+        velocity_profile=np.array([[0.0, 3.0]]),
+        profile_dt=0.1,
+    )
+    cmd = _follow_plan(plan, np.array([0.0, 0.0]), max_speed=10.0, t_since_replan=0.0)
+    assert np.allclose(cmd, [0.0, 3.0])
 
 
 def test_voxel_world_dynamic_obstacles_advance_and_collide() -> None:

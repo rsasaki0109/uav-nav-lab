@@ -184,7 +184,10 @@ def run_episode_multi(
             if finished[i]:
                 # frozen — no integration, peers see vel=0 via _peers_view
                 continue
-            cmd = _follow_plan(plans[i], observations[i], planners[i].max_speed)
+            cmd = _follow_plan(
+                plans[i], observations[i], planners[i].max_speed,
+                t_since_replan=float(t - last_replan_t[i]),
+            )
             ns, info = sims[i].step(cmd)
             new_states[i] = ns
             infos[i] = info
