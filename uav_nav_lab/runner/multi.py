@@ -192,6 +192,7 @@ def run_episode_multi(
                 observed_pos=observations[i],
                 cmd=cmd,
                 info={"collision": info.collision, "goal_reached": info.goal_reached},
+                sim_extra=dict(ns.extra) if ns.extra else None,
             )
 
         # 3. peer-vs-peer collision check on the freshly stepped positions

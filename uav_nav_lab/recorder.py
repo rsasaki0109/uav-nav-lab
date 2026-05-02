@@ -30,18 +30,30 @@ class EpisodeRecorder:
         observed_pos: np.ndarray,
         cmd: np.ndarray,
         info: dict[str, Any],
+        sim_extra: dict[str, Any] | None = None,
     ) -> None:
-        self.steps.append(
-            {
-                "t": float(t),
-                "true_pos": [float(v) for v in true_pos],
-                "true_vel": [float(v) for v in true_vel],
-                "observed_pos": [float(v) for v in observed_pos],
-                "cmd": [float(v) for v in cmd],
-                "collision": bool(info.get("collision", False)),
-                "goal_reached": bool(info.get("goal_reached", False)),
-            }
-        )
+        row: dict[str, Any] = {
+            "t": float(t),
+            "true_pos": [float(v) for v in true_pos],
+            "true_vel": [float(v) for v in true_vel],
+            "observed_pos": [float(v) for v in observed_pos],
+            "cmd": [float(v) for v in cmd],
+            "collision": bool(info.get("collision", False)),
+            "goal_reached": bool(info.get("goal_reached", False)),
+        }
+        # Surface a small summary of sim-side sensor side-channels so they
+        # show up in the episode JSON. Currently: lidar point counts per
+        # configured sensor name. Full point clouds stay in memory only —
+        # writing them per step would balloon JSON sizes (e.g. a 16-beam
+        # lidar at 10 Hz → ~10⁴ floats × 1500 steps).
+        if sim_extra:
+            lidar_pts = sim_extra.get("lidar_points")
+            if isinstance(lidar_pts, dict) and lidar_pts:
+                row["lidar_points"] = {
+                    str(name): int(np.asarray(pc).shape[0])
+                    for name, pc in lidar_pts.items()
+                }
+        self.steps.append(row)
 
     def log_replan(self, t: float, plan_length: int, planner_dt_ms: float) -> None:
         self.replans.append(

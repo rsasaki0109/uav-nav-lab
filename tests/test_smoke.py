@@ -214,6 +214,42 @@ def test_airsim_bridge_step_round_trips_enu_via_mock_client() -> None:
     assert info.collision is False
 
 
+def test_recorder_summarizes_lidar_points_into_step_row() -> None:
+    """When a sim backend populates state.extra['lidar_points'] with
+    name-keyed (N, 3) arrays, EpisodeRecorder.log_step should surface
+    {name: count} into the step row so episode JSONs show that lidar
+    was actually being polled. Full clouds stay in memory only."""
+    from uav_nav_lab.recorder import EpisodeRecorder
+
+    rec = EpisodeRecorder(episode_index=0, seed=0)
+    pos = np.array([1.0, 2.0])
+    cloud_a = np.zeros((42, 3))
+    cloud_b = np.zeros((7, 3))
+
+    # Step 1: lidar populated → counts persisted.
+    rec.log_step(
+        t=0.0, true_pos=pos, true_vel=pos, observed_pos=pos, cmd=pos,
+        info={"collision": False, "goal_reached": False},
+        sim_extra={"lidar_points": {"FrontLidar": cloud_a, "RearLidar": cloud_b}},
+    )
+    # Step 2: empty extra dict → no lidar key in row.
+    rec.log_step(
+        t=0.05, true_pos=pos, true_vel=pos, observed_pos=pos, cmd=pos,
+        info={"collision": False, "goal_reached": False},
+        sim_extra={},
+    )
+    # Step 3: extra carries something else but no lidar → no lidar key.
+    rec.log_step(
+        t=0.10, true_pos=pos, true_vel=pos, observed_pos=pos, cmd=pos,
+        info={"collision": False, "goal_reached": False},
+        sim_extra={"depth_image": "ignored"},
+    )
+
+    assert rec.steps[0]["lidar_points"] == {"FrontLidar": 42, "RearLidar": 7}
+    assert "lidar_points" not in rec.steps[1]
+    assert "lidar_points" not in rec.steps[2]
+
+
 def test_airsim_bridge_polls_lidar_and_converts_to_enu_via_mock_client() -> None:
     """When `lidars: [name]` is configured, AirSimBridge.step() should call
     client.getLidarData(name) and stash an (N, 3) ENU point cloud at
