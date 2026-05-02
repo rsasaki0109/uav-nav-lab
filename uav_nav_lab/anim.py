@@ -350,6 +350,106 @@ def _animate_episode_multi_2d(
     return fig, anim
 
 
+def _animate_episode_multi_3d(
+    plt, animation, cfg: ExperimentConfig, drones_eps: list[dict], scenario, fps: int
+) -> Any:
+    """Render all N drones from a single multi-drone 3D episode in one GIF.
+
+    Mirrors `_animate_episode_3d` (single drone, rotating view, static
+    voxels as a faint scatter) but draws every drone's trajectory + dot
+    in a per-drone palette colour and scatters per-drone start / goal
+    markers — same convention as `_animate_episode_multi_2d`.
+    """
+    import numpy as np
+    from mpl_toolkits.mplot3d import Axes3D  # noqa: F401  registers projection
+
+    res = scenario.resolution
+    nx, ny, nz = scenario.occupancy.shape
+    drones_eps = sorted(drones_eps, key=lambda e: e["meta"].get("drone_id", 0))
+    if not drones_eps or not drones_eps[0]["steps"]:
+        return None
+
+    n_steps = max(len(e["steps"]) for e in drones_eps)
+    dt = float(cfg.simulator.get("dt", 0.05))
+    sim_fps = 1.0 / dt
+    stride = max(1, int(round(sim_fps / fps)))
+    frame_indices = list(range(0, n_steps, stride))
+    if frame_indices[-1] != n_steps - 1:
+        frame_indices.append(n_steps - 1)
+
+    fig = plt.figure(figsize=(7, 6))
+    ax = fig.add_subplot(111, projection="3d")
+    ax.set_xlim(0, nx * res)
+    ax.set_ylim(0, ny * res)
+    ax.set_zlim(0, nz * res)
+
+    static_occ = getattr(scenario, "_static_occ", scenario.occupancy)
+    ix, iy, iz = np.where(static_occ)
+    if ix.size > 0:
+        ax.scatter(
+            (ix + 0.5) * res,
+            (iy + 0.5) * res,
+            (iz + 0.5) * res,
+            c="gray", alpha=0.20, s=14, marker="s",
+        )
+
+    palette = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple",
+               "tab:brown", "tab:pink", "tab:olive"]
+    traj_lines: list[Any] = []
+    drone_pts: list[Any] = []
+    for ep in drones_eps:
+        i = int(ep["meta"].get("drone_id", 0))
+        color = palette[i % len(palette)]
+        name = ep["meta"].get("drone_name", f"d{i}")
+        outcome = ep.get("outcome", "?")
+        (line,) = ax.plot([], [], [], "-", color=color, lw=1.3,
+                          label=f"{name} ({outcome})")
+        pt = ax.scatter([], [], [], c=color, s=60, depthshade=True,
+                        edgecolors="black", linewidths=0.5)
+        traj_lines.append(line)
+        drone_pts.append(pt)
+        if i < len(scenario.drones):
+            d = scenario.drones[i]
+            ax.scatter(*d.start, c=color, s=70, marker="o",
+                       edgecolors="black", linewidths=0.5)
+            ax.scatter(*d.goal, c=color, s=140, marker="*",
+                       edgecolors="black", linewidths=0.5)
+
+    title = ax.set_title("")
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
+    ax.legend(loc="upper left", fontsize=7)
+
+    n_frames = len(frame_indices)
+
+    def update(idx_in_frames: int):
+        i = frame_indices[idx_in_frames]
+        for ep, line, pt in zip(drones_eps, traj_lines, drone_pts):
+            steps = ep["steps"]
+            j = min(i, len(steps) - 1)
+            tx = [steps[k]["true_pos"][0] for k in range(j + 1)]
+            ty = [steps[k]["true_pos"][1] for k in range(j + 1)]
+            tz = [steps[k]["true_pos"][2] for k in range(j + 1)]
+            line.set_data(tx, ty)
+            line.set_3d_properties(tz)
+            pt._offsets3d = ([tx[-1]], [ty[-1]], [tz[-1]])
+
+        ax.view_init(elev=22.0, azim=-60.0 + (idx_in_frames / max(1, n_frames - 1)) * 120.0)
+        outcomes = [e.get("outcome", "?") for e in drones_eps]
+        joint = "all_success" if all(o == "success" for o in outcomes) else "mixed"
+        title.set_text(
+            f"ep {drones_eps[0]['meta']['episode']:03d}  joint={joint}  "
+            f"t={i * dt:.2f}s"
+        )
+        return (*traj_lines, *drone_pts, title)
+
+    anim = animation.FuncAnimation(
+        fig, update, frames=n_frames, interval=1000 / fps, blit=False
+    )
+    return fig, anim
+
+
 def viz_anim(run_dir: Path, fps: int = 20) -> list[Path]:
     plt, animation = _need_mpl_anim()
     run_dir = Path(run_dir)
@@ -363,10 +463,10 @@ def viz_anim(run_dir: Path, fps: int = 20) -> list[Path]:
     if scenario.ndim not in (2, 3):
         raise NotImplementedError(f"anim supports 2D / 3D scenarios (got ndim={scenario.ndim}).")
 
-    is_multi = str(cfg.scenario.get("type", "")) == "multi_drone_grid"
+    is_multi = str(cfg.scenario.get("type", "")) in ("multi_drone_grid", "multi_drone_voxel")
     saved: list[Path] = []
 
-    if is_multi and scenario.ndim == 2:
+    if is_multi:
         # Group per-drone JSONs by episode index, render one GIF per episode.
         episodes: list[dict] = []
         for ef in sorted(run_dir.glob("episode_*.json")):
@@ -377,8 +477,9 @@ def viz_anim(run_dir: Path, fps: int = 20) -> list[Path]:
         by_ep: dict[int, list[dict]] = {}
         for ep in episodes:
             by_ep.setdefault(int(ep["meta"]["episode"]), []).append(ep)
+        animator = _animate_episode_multi_3d if scenario.ndim == 3 else _animate_episode_multi_2d
         for ep_idx in sorted(by_ep):
-            result = _animate_episode_multi_2d(
+            result = animator(
                 plt, animation, cfg, by_ep[ep_idx], scenario, fps=fps,
             )
             if result is None:

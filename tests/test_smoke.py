@@ -2735,6 +2735,23 @@ def test_multi_drone_voxel_scenario_constructs_3d() -> None:
         })
 
 
+def test_multi_drone_voxel_anim_groups_drones_per_episode(tmp_path: Path) -> None:
+    """3D multi-drone anim path: one GIF per episode (not per drone), and
+    the new 3D animator is dispatched for ndim==3 multi scenarios."""
+    pytest.importorskip("matplotlib")
+    pytest.importorskip("PIL")
+    from uav_nav_lab.anim import viz_anim
+    cfg = ExperimentConfig.from_yaml(EXAMPLES / "exp_multi_drone_3d_2.yaml")
+    cfg.num_episodes = 1
+    cfg.simulator["max_steps"] = 100
+    run_dir = run_experiment(cfg, tmp_path / "multi_3d_anim")
+    saved = viz_anim(run_dir, fps=10)
+    assert len(saved) == 1
+    p = saved[0]
+    assert p.suffix == ".gif"
+    assert p.stat().st_size > 1000
+
+
 def test_multi_drone_voxel_runs_and_logs(tmp_path: Path) -> None:
     """End-to-end smoke: one episode of the 3D 2-drone YAML produces
     per-drone JSON logs and a joint-summary file, mirroring the 2D path."""

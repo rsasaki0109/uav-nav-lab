@@ -16,12 +16,18 @@ every example YAML carries its own validated finding.**
 <tr>
 <td><img src="docs/images/demo_mpc.gif" alt="2D Pareto-MPC routing through three bouncing dynamic obstacles" width="280"></td>
 <td><img src="docs/images/demo_3d.gif" alt="3D Pareto-MPC episode on a 40×40×12 voxel world with three bouncing dynamic obstacles" width="280"></td>
-<td><img src="docs/images/demo_multi_drone.gif" alt="4-drone cross-crossing scenario: east/west/north/south pairs all reach opposite goals via constant-velocity peer prediction" width="280"></td>
 </tr>
 <tr>
 <td align="center"><i>2D — Pareto-MPC (n=16, h=20) through three bouncing obstacles.</i></td>
 <td align="center"><i>3D — same planner family on a 40×40×12 voxel world.</i></td>
-<td align="center"><i>Multi-drone — 4 drones cross-crossing via CV peer prediction.</i></td>
+</tr>
+<tr>
+<td><img src="docs/images/demo_multi_drone.gif" alt="4-drone 2D cross-crossing scenario: east/west/north/south pairs all reach opposite goals via constant-velocity peer prediction" width="280"></td>
+<td><img src="docs/images/demo_multi_drone_3d.gif" alt="4-drone 3D cross-crossing scenario in a 40×40×12 voxel world: every drone reaches its opposite goal under CV peer prediction" width="280"></td>
+</tr>
+<tr>
+<td align="center"><i>Multi-drone 2D — 4 drones cross-crossing via CV peer prediction.</i></td>
+<td align="center"><i>Multi-drone 3D — same coordination, 40×40×12 voxel world.</i></td>
 </tr>
 </table>
 
