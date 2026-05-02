@@ -14,12 +14,14 @@ every example YAML carries its own validated finding.**
 
 <table>
 <tr>
-<td><img src="docs/images/demo_mpc.gif" alt="2D Pareto-MPC routing through three bouncing dynamic obstacles" width="380"></td>
-<td><img src="docs/images/demo_3d.gif" alt="3D Pareto-MPC episode on a 40×40×12 voxel world with three bouncing dynamic obstacles" width="380"></td>
+<td><img src="docs/images/demo_mpc.gif" alt="2D Pareto-MPC routing through three bouncing dynamic obstacles" width="280"></td>
+<td><img src="docs/images/demo_3d.gif" alt="3D Pareto-MPC episode on a 40×40×12 voxel world with three bouncing dynamic obstacles" width="280"></td>
+<td><img src="docs/images/demo_multi_drone.gif" alt="4-drone cross-crossing scenario: east/west/north/south pairs all reach opposite goals via constant-velocity peer prediction" width="280"></td>
 </tr>
 <tr>
 <td align="center"><i>2D — Pareto-MPC (n=16, h=20) through three bouncing obstacles.</i></td>
 <td align="center"><i>3D — same planner family on a 40×40×12 voxel world.</i></td>
+<td align="center"><i>Multi-drone — 4 drones cross-crossing via CV peer prediction.</i></td>
 </tr>
 </table>
 
@@ -130,7 +132,7 @@ Source layout:
 uav_nav_lab/
 ├── sim/         dummy_2d / dummy_3d (point-mass), airsim, ros2
 ├── scenario/    grid_world, voxel_world, multi_drone_grid
-├── planner/     astar, straight, mpc, rrt, rrt_star  (registry: PLANNER_REGISTRY)
+├── planner/     astar, straight, mpc, rrt, rrt_star, chomp  (registry: PLANNER_REGISTRY)
 ├── sensor/      perfect, delayed, kalman_delayed, lidar, pointcloud_occupancy, depth_image_occupancy
 ├── predictor/   constant_velocity, noisy_velocity, kalman_velocity
 ├── runner/      experiment, multi (multi-drone), sweep
@@ -145,7 +147,7 @@ Backends at a glance:
 |---|---|---|
 | sim | `dummy_2d`, `dummy_3d`, `airsim`, `ros2` | `SIM_REGISTRY` |
 | scenario | `grid_world`, `voxel_world`, `multi_drone_grid` | `SCENARIO_REGISTRY` |
-| planner | `astar`, `straight`, `mpc`, `rrt`, `rrt_star` | `PLANNER_REGISTRY` |
+| planner | `astar`, `straight`, `mpc`, `rrt`, `rrt_star`, `chomp` | `PLANNER_REGISTRY` |
 | sensor | `perfect`, `delayed`, `kalman_delayed`, `lidar`, `pointcloud_occupancy`, `depth_image_occupancy` | `SENSOR_REGISTRY` |
 | predictor | `constant_velocity`, `noisy_velocity`, `kalman_velocity` | `PREDICTOR_REGISTRY` |
 
@@ -232,8 +234,9 @@ takeaways) live in [`docs/findings.md`](docs/findings.md):
   + a CLI smoke job.
 - **6 sensor backends** (`perfect`, `delayed`, `kalman_delayed`, `lidar`, `pointcloud_occupancy`, `depth_image_occupancy`),
   **3 predictor backends** (`constant_velocity`, `noisy_velocity`,
-  `kalman_velocity`), **5 planners** (`astar`, `straight`, `mpc`, `rrt`, `rrt_star`),
-  **3 scenarios** (`grid_world`, `voxel_world`, `multi_drone_grid`).
+  `kalman_velocity`), **6 planners** (`astar`, `straight`, `mpc`, `rrt`,
+  `rrt_star`, `chomp`), **3 scenarios** (`grid_world`, `voxel_world`,
+  `multi_drone_grid`).
 - All ablation results are reproducible from the example YAMLs by
   copy-pasting one `uav-nav sweep ...` line.
 
@@ -283,9 +286,6 @@ External backends:
 
 - 3D perception-latency re-validation in `voxel_world` (Pareto already
   validated — see [docs/findings.md](docs/findings.md)).
-- Wind / disturbance model in `dummy_*` simulators.
-- CHOMP / trajectory-optimisation planners on top of the existing
-  RRT / RRT* sampling backends.
 - ROS 2 bridge sim-time: respect `/clock` and `use_sim_time` so
   PX4-SITL fast-forward stays decoupled from the runner's wall-clock
   loop (current bridge ticks `rclpy.spin_once` with wall-clock
