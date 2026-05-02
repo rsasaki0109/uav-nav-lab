@@ -23,6 +23,16 @@ from ..registry import Registry
 class Plan:
     waypoints: np.ndarray  # shape (N, D) — used by pure-pursuit follower
     target_velocity: np.ndarray | None = None  # bypass follower if set
+    # Time-indexed velocity profile, shape (T, D). Sampled at uniform
+    # `profile_dt` starting at the moment the plan was returned. The
+    # follower picks the bin matching elapsed-since-replan time. Lets
+    # smoothing planners (mpc_chomp) emit a varying velocity instead of
+    # a single constant `target_velocity`, addressing the architectural
+    # null result from PR #21 (constant-velocity bypass *was* MPC's
+    # smoothness mechanism — to make smoothing pay off the controller
+    # has to track varying velocity directly).
+    velocity_profile: np.ndarray | None = None
+    profile_dt: float | None = None
     meta: dict = field(default_factory=dict)
 
     @property

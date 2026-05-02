@@ -9,12 +9,20 @@ a corner the controller chases. This wrapper
      scoring, dynamic-obstacle prediction — unchanged),
   2. prepends the current observation and runs a few CHOMP smoothing
      iterations over the full polyline with both endpoints clamped,
-  3. clears `target_velocity` so the runner pure-pursues the smoothed
-     path instead of the constant rollout velocity.
+  3. emits the smoothed trajectory either as waypoints (pure-pursuit) or
+     as a time-indexed velocity profile (controller tracks v(t) directly).
 
-The point isn't to find a different *route* — that's MPC's job and CHOMP
-local-only descent can't beat it. The point is to file off the corner at
-each replan boundary so the velocity profile is gentler.
+Output modes:
+  - `output: "waypoints"` — clears target_velocity, pure-pursuit on the
+    smoothed waypoints. Original PR #21 mode; the head-to-head there
+    found this *worse* on per-step |Δcmd| than plain MPC because
+    pure-pursuit re-aims every control step (smoothness lives in the
+    constant-velocity bypass, not in the path).
+  - `output: "velocity_profile"` — derives per-step velocities from the
+    smoothed path (finite-difference / dt_plan) and emits a time-indexed
+    profile. The runner's velocity-tracking mode applies them in order,
+    so the controller follows the *smoothed velocity* directly. This is
+    the architectural fix the PR #21 finding pointed at.
 """
 
 from __future__ import annotations
@@ -42,6 +50,7 @@ class MPCChompPlanner(Planner):
         epsilon: float = 2.0,
         smooth_resolution: float = 1.0,
         smooth_inflate: int = 0,
+        output: str = "waypoints",
     ) -> None:
         self._mpc = mpc
         self.max_speed = mpc.max_speed
@@ -53,6 +62,11 @@ class MPCChompPlanner(Planner):
         self.epsilon = float(epsilon)
         self.smooth_resolution = float(smooth_resolution)
         self.smooth_inflate = int(smooth_inflate)
+        if output not in ("waypoints", "velocity_profile"):
+            raise ValueError(
+                f"output must be 'waypoints' or 'velocity_profile'; got {output!r}"
+            )
+        self.output = output
         # Hessian cache keyed by trajectory length; MPC rollouts vary in
         # length when a sample reaches the goal mid-horizon.
         self._K_cache: dict[int, tuple[np.ndarray, np.ndarray, np.ndarray]] = {}
@@ -74,6 +88,7 @@ class MPCChompPlanner(Planner):
             epsilon=float(cfg.get("epsilon", 2.0)),
             smooth_resolution=float(cfg.get("smooth_resolution", 1.0)),
             smooth_inflate=int(cfg.get("smooth_inflate", 0)),
+            output=str(cfg.get("output", "waypoints")),
         )
 
     def reset(self) -> None:
@@ -138,12 +153,31 @@ class MPCChompPlanner(Planner):
             )
             x[1:-1] = x[1:-1] - step * scale
 
-        # Drop the prepended observation. Clearing target_velocity forces the
-        # runner's pure-pursuit follower onto the smoothed waypoints; if we
-        # left target_velocity set the smoothing would be cosmetic.
+        # Drop the prepended observation.
         smoothed = x[1:]
         meta = dict(base.meta)
         meta["planner"] = "mpc_chomp"
         meta["smoothed"] = True
         meta["n_smooth_iters"] = self.n_smooth_iters
+        meta["output"] = self.output
+
+        if self.output == "velocity_profile":
+            # Per-step velocity from the smoothed path (forward differences
+            # over dt_plan, matching MPC's rollout time grid). Length is
+            # n - 1 = original waypoint count; the last entry repeats the
+            # final velocity so the controller has something to apply if
+            # replan is late. Clearing target_velocity is essential — if it
+            # were set, the runner would prefer it over the profile.
+            dt = float(self._mpc.dt_plan)
+            full = np.vstack([np.atleast_2d(x[0]), smoothed])  # (n, ndim)
+            vel = np.diff(full, axis=0) / dt                    # (n-1, ndim)
+            return Plan(
+                waypoints=smoothed,
+                target_velocity=None,
+                velocity_profile=vel,
+                profile_dt=dt,
+                meta=meta,
+            )
+        # `waypoints` mode: clear target_velocity so the runner falls back
+        # to pure-pursuit on the smoothed path. (PR #21 baseline mode.)
         return Plan(waypoints=smoothed, target_velocity=None, meta=meta)
