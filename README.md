@@ -133,8 +133,8 @@ Source layout:
 uav_nav_lab/
 ├── sim/         dummy_2d / dummy_3d (point-mass), airsim, ros2
 ├── scenario/    grid_world, voxel_world, multi_drone_grid
-├── planner/     astar, straight, mpc, rrt, rrt_star, chomp, mpc_chomp, mppi  (registry: PLANNER_REGISTRY)
-├── sensor/      perfect, delayed, kalman_delayed, lidar, pointcloud_occupancy, depth_image_occupancy
+├── planner/     astar, straight, mpc, rrt, rrt_star, chomp, mpc_chomp  (registry: PLANNER_REGISTRY)
+├── sensor/      perfect, delayed, kalman_delayed, lidar, pointcloud_occupancy
 ├── predictor/   constant_velocity, noisy_velocity, kalman_velocity
 ├── runner/      experiment, multi (multi-drone), sweep
 ├── eval/        metrics (Wilson + SEM CIs), compare
@@ -148,8 +148,8 @@ Backends at a glance:
 |---|---|---|
 | sim | `dummy_2d`, `dummy_3d`, `airsim`, `ros2` | `SIM_REGISTRY` |
 | scenario | `grid_world`, `voxel_world`, `multi_drone_grid` | `SCENARIO_REGISTRY` |
-| planner | `astar`, `straight`, `mpc`, `rrt`, `rrt_star`, `chomp`, `mpc_chomp`, `mppi` | `PLANNER_REGISTRY` |
-| sensor | `perfect`, `delayed`, `kalman_delayed`, `lidar`, `pointcloud_occupancy`, `depth_image_occupancy` | `SENSOR_REGISTRY` |
+| planner | `astar`, `straight`, `mpc`, `rrt`, `rrt_star`, `chomp`, `mpc_chomp` | `PLANNER_REGISTRY` |
+| sensor | `perfect`, `delayed`, `kalman_delayed`, `lidar`, `pointcloud_occupancy` | `SENSOR_REGISTRY` |
 | predictor | `constant_velocity`, `noisy_velocity`, `kalman_velocity` | `PREDICTOR_REGISTRY` |
 
 Adding a new backend is one new file with a `@REGISTRY.register("name")`
@@ -231,29 +231,6 @@ saga uncovered, just on the search side.
 
 > Reproduce: `uav-nav run examples/exp_compare_{straight,astar,rrt,rrt_star,chomp,chomp_rrt,mpc}.yaml`,
 > then `uav-nav compare results/cmp_straight results/cmp_astar results/cmp_rrt_star results/cmp_chomp results/cmp_rrt results/cmp_chomp_rrt results/cmp_mpc`.
-
-### 👁️ Sensor FOV ablation: omni-LiDAR vs forward depth camera
-
-Same scenario, same A* planner, same compute — only the perception
-stack changes. Both sensors are fed by the dummy sim's new
-`synthetic_perception` config (no AirSim / ROS 2 install needed):
-
-| sensor | FOV | success | plan_dt |
-|---|---|---|---|
-| `pointcloud_occupancy` | omni 8 m | **93.3 %** [78.7, 98.2] | 1.36 ms |
-| `depth_image_occupancy` | 90° forward, 8 m max | 63.3 % [45.5, 78.1] | 1.45 ms |
-
-**−30 pp from losing rear / side visibility, at essentially identical
-compute (≈1.4 ms / replan)**. The Wilson 95 % CIs barely overlap
-(78.7 vs 78.1) — significant. The ~30 % of episodes that fail in
-forward-only mode are mostly obstacles entering the planner's path
-from the side or behind during a replan window; an omni-LiDAR sees
-them in time. Engineering takeaway: **planner smarts cannot make up
-for missing FOV** — the planner can only react to what the sensor
-surfaced. Pair multiple cameras (front + back) or use omni-LiDAR
-to close the gap.
-
-> Reproduce: `uav-nav run examples/exp_ablate_sensor_{pointcloud,depth}.yaml`.
 
 ### More studies — see [docs/findings.md](docs/findings.md)
 
