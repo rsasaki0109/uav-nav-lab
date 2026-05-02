@@ -319,6 +319,219 @@ def test_airsim_lidar_to_pointcloud_occupancy_to_planner_pipeline_via_mocks() ->
     assert captured["calls"] == 3
 
 
+def test_airsim_bridge_polls_cameras_and_stashes_png_bytes_via_mock_client() -> None:
+    """When `cameras: [{name, image_type}]` is configured, AirSimBridge.step()
+    should call client.simGetImages() with a list of airsim.ImageRequest
+    objects and stash the response bytes at state.extra["camera_images"][name].
+
+    The bridge lazy-imports airsim only when cameras are configured; the
+    test therefore injects a minimal fake airsim module into sys.modules
+    so the import succeeds and ImageRequest construction works."""
+    import sys
+    from types import ModuleType, SimpleNamespace
+
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+    from uav_nav_lab.sim.airsim_bridge import AirSimBridge
+
+    grid_cls = SCENARIO_REGISTRY.get("grid_world")
+    sc = grid_cls.from_config(
+        {"size": [10, 10], "start": [1.0, 1.0], "goal": [9.0, 9.0], "obstacles": {"type": "none"}}
+    )
+
+    # Minimal stand-in for `airsim.ImageRequest` / `airsim.ImageType` so
+    # `_build_image_requests` does not have to know about CI vs prod.
+    class _ImgType:
+        Scene = 0
+        DepthVis = 3
+        DepthPerspective = 2
+        DepthPlanar = 1
+        Segmentation = 5
+        SurfaceNormals = 6
+        Infrared = 7
+
+    class _ImgReq:
+        def __init__(self, camera_name, image_type, pixels_as_float, compress):  # noqa: ARG002
+            self.camera_name = camera_name
+            self.image_type = image_type
+            self.compress = compress
+
+    # `reset()` also touches airsim.Pose / Vector3r / to_quaternion for the
+    # teleport step, so the fake module needs those too — otherwise the
+    # narrow `except ImportError` around teleport leaks an AttributeError.
+    class _Vec3:
+        def __init__(self, x, y, z):
+            self.x_val, self.y_val, self.z_val = x, y, z
+
+    class _Pose:
+        def __init__(self, position, orientation):
+            self.position, self.orientation = position, orientation
+
+    fake_airsim = ModuleType("airsim")
+    fake_airsim.ImageType = _ImgType
+    fake_airsim.ImageRequest = _ImgReq
+    fake_airsim.Vector3r = _Vec3
+    fake_airsim.Pose = _Pose
+    fake_airsim.to_quaternion = lambda *_a, **_k: object()
+    saved = sys.modules.get("airsim")
+    sys.modules["airsim"] = fake_airsim
+    try:
+        class FakeKin:
+            class _V:
+                x_val = 0.0
+                y_val = 0.0
+                z_val = 0.0
+            position = _V()
+            linear_velocity = _V()
+
+        captured_requests: list[list[Any]] = []  # noqa: F821
+
+        class FakeClient:
+            def confirmConnection(self): pass
+            def enableApiControl(self, _o, _v): pass
+            def armDisarm(self, _o, _v): pass
+            def reset(self): pass
+            def simSetVehiclePose(self, *_a, **_k): pass
+            def simPause(self, _o): pass
+            def simContinueForTime(self, _dt): pass
+            def moveByVelocityAsync(self, *_a, **_k):
+                class _F:
+                    def join(self): pass
+                return _F()
+            def getMultirotorState(self, vehicle_name=None):  # noqa: ARG002
+                return SimpleNamespace(kinematics_estimated=FakeKin())
+            def simGetCollisionInfo(self, vehicle_name=None):  # noqa: ARG002
+                return SimpleNamespace(has_collided=False)
+            def simGetImages(self, requests, vehicle_name=None):  # noqa: ARG002
+                captured_requests.append(list(requests))
+                # Two cameras configured → two responses with distinct PNG bytes.
+                return [
+                    SimpleNamespace(image_data_uint8=b"PNG_BYTES_FRONT"),
+                    SimpleNamespace(image_data_uint8=b"PNG_BYTES_DEPTH"),
+                ]
+
+        fake = FakeClient()
+        bridge = AirSimBridge(
+            dt=0.05, scenario=sc, client=fake,
+            cameras=[
+                {"name": "front_center", "image_type": "scene"},
+                {"name": "front_depth", "image_type": "depth_vis"},
+            ],
+        )
+        bridge.reset()
+        out_state, _ = bridge.step(np.array([0.0, 0.0]))
+
+        # simGetImages received two ImageRequests with the right names + types.
+        assert len(captured_requests) == 1
+        reqs = captured_requests[0]
+        assert reqs[0].camera_name == "front_center"
+        assert reqs[0].image_type == _ImgType.Scene
+        assert reqs[0].compress is True
+        assert reqs[1].camera_name == "front_depth"
+        assert reqs[1].image_type == _ImgType.DepthVis
+
+        # Both PNG payloads landed in state.extra under their camera names.
+        cams = out_state.extra["camera_images"]
+        assert cams["front_center"] == b"PNG_BYTES_FRONT"
+        assert cams["front_depth"] == b"PNG_BYTES_DEPTH"
+    finally:
+        if saved is None:
+            del sys.modules["airsim"]
+        else:
+            sys.modules["airsim"] = saved
+
+
+def test_runner_saves_camera_frames_to_disk_when_configured(tmp_path: Path) -> None:
+    """When `output.save_camera_frames: true`, the runner should write each
+    step's camera_images bytes to `<run_dir>/frames_NNN/step_NNNN_<name>.png`."""
+    from uav_nav_lab.planner.base import Plan
+    from uav_nav_lab.runner.experiment import _run_episode
+
+    class FakeSim:
+        # Point-mass-like stub that reports collision/goal_reached on a fixed
+        # step so the episode terminates predictably.
+        dt = 0.05
+        def __init__(self) -> None:
+            self.scenario = SimpleNamespace(  # noqa: F821
+                dynamic_obstacles=[], ndim=2,
+            )
+            self.obstacle_map = np.zeros((10, 10), dtype=bool)
+            self.goal = np.array([9.0, 9.0])
+            self._t = 0.0
+            self._step = 0
+        def reset(self, *, seed=None):  # noqa: ARG002
+            self._t = 0.0
+            self._step = 0
+            from uav_nav_lab.sim.base import SimState
+            return SimState(t=0.0, position=np.array([1.0, 1.0]),
+                            velocity=np.zeros(2),
+                            extra={"camera_images": {"cam0": b"PNG_INIT"}})
+        def step(self, _cmd):
+            from uav_nav_lab.sim.base import SimState, SimStepInfo
+            self._t += self.dt
+            self._step += 1
+            ns = SimState(
+                t=self._t, position=np.array([1.0, 1.0]), velocity=np.zeros(2),
+                extra={"camera_images": {"cam0": f"PNG_{self._step:04d}".encode()}},
+            )
+            done = self._step >= 3
+            return ns, SimStepInfo(collision=False, goal_reached=done, truncated=False)
+
+    class SpyPlanner:
+        max_speed = 1.0
+        def reset(self): pass
+        def plan(self, observation, goal, perceived_map, dynamic_obstacles=None):  # noqa: ARG002
+            wpts = np.array([observation, goal[: observation.shape[0]]])
+            return Plan(waypoints=wpts, meta={"status": "ok"})
+
+    from uav_nav_lab.sensor import SENSOR_REGISTRY
+
+    sensor = SENSOR_REGISTRY.get("perfect").from_config({})
+    from types import SimpleNamespace  # noqa: F811
+    sim = FakeSim()
+    fdir = tmp_path / "frames_000"
+    rec = _run_episode(
+        sim=sim, planner=SpyPlanner(), sensor=sensor,
+        seed=0, replan_period=0.05, max_steps=10, episode_index=0,
+        frame_dir=fdir,
+    )
+    assert rec.outcome == "success"
+    # 3 steps logged, 3 frame files written (step indices 0000-0002).
+    assert sorted(p.name for p in fdir.iterdir()) == [
+        "step_0000_cam0.png", "step_0001_cam0.png", "step_0002_cam0.png",
+    ]
+    # Bytes round-trip — recorder writes verbatim, no re-encoding.
+    assert (fdir / "step_0000_cam0.png").read_bytes() == b"PNG_0001"
+    assert (fdir / "step_0002_cam0.png").read_bytes() == b"PNG_0003"
+
+
+def test_video_stitch_run_produces_one_mp4_per_episode_camera(tmp_path: Path) -> None:
+    """Smoke test the `uav-nav video` end of the pipeline: write a few
+    valid PNGs into a frames_NNN/ directory and verify `stitch_run`
+    emits the expected mp4 path. Skip if ffmpeg or PIL is missing —
+    both are realistic prereqs for the actual user workflow."""
+    import shutil
+
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg not installed; skipping video stitching test")
+    pil_image = pytest.importorskip("PIL.Image")
+
+    from uav_nav_lab.video import stitch_run
+
+    # h264 needs even dimensions; 16×16 is small enough to keep the test
+    # fast but real enough to encode cleanly.
+    run_dir = tmp_path / "run"
+    fdir = run_dir / "frames_000"
+    fdir.mkdir(parents=True)
+    for i in range(3):
+        img = pil_image.new("RGB", (16, 16), color=(i * 80, 100, 200))
+        img.save(fdir / f"step_{i:04d}_cam0.png")
+
+    saved = stitch_run(run_dir, fps=10)
+    assert len(saved) == 1
+    assert saved[0] == run_dir / "episode_000_cam0.mp4"
+    assert saved[0].stat().st_size > 0
+
+
 def test_pointcloud_occupancy_marks_world_cells_from_local_points() -> None:
     """Drone at world (5, 5); lidar reports local points (1, 0, 0) and
     (-1, 1, 0) → world (6, 5) and (4, 6) → cells [6][5] and [4][6]
