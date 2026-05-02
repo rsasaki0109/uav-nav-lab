@@ -264,7 +264,14 @@ External backends:
   ROS 2 and bringing up a sim (Gazebo / Ignition / PX4-SITL via
   MAVROS). Frames assumed ENU per REP-103; PX4-NED users convert one
   layer up. Mock-injectable adapter makes the plumbing CI-testable
-  without rclpy.
+  without rclpy. Optional `lidars: [topic, …]` subscribes to
+  `sensor_msgs/PointCloud2` and decodes each step's latest cloud to
+  (N, 3) ENU points at `state.extra["lidar_points"][topic]` — same key
+  as the AirSim bridge, so `pointcloud_occupancy` consumes both
+  backends without a code change. Optional `cameras: [topic, …]`
+  subscribes to `sensor_msgs/Image` and PNG-encodes each frame to
+  `state.extra["camera_images"][topic]`, feeding the same
+  `output.save_camera_frames` + `uav-nav video` pipeline.
 
 ## 🗺️ Roadmap
 
