@@ -1,0 +1,61 @@
+# Sim-transferability ablation: dummy_3d half of the comparison.
+#
+# Pairs with `exp_transfer_airsim.yaml` (identical scenario / planner /
+# sensor, only `simulator.type` differs). Both run the same Pareto-MPC
+# straight-line flight from start → goal in an empty obstacle world.
+# The `dummy_3d` integrator perfectly tracks velocity commands subject
+# to `max_accel`; AirSim's SimpleFlight runs actual quadrotor physics.
+# Compare per-episode `final_t`, `path_length`, `avg_speed` and the
+# planner_dt ms across backends to quantify what dummy_3d misses.
+#
+# Run:
+#   uav-nav run examples/exp_transfer_dummy.yaml
+#   uav-nav eval results/transfer_dummy
+#
+# Result (n=10): see docs/findings.md "AirSim vs dummy_3d
+# transferability".
+
+name: transfer_dummy
+seed: 42
+num_episodes: 10
+
+scenario:
+  type: voxel_world
+  size: [60, 60, 40]
+  # AirSim spawn aligned to ENU (0,0,30) so both backends have the
+  # drone at the same world position at t=0.
+  start: [0.0, 0.0, 30.0]
+  goal:  [0.0, 30.0, 30.0]
+  resolution: 1.0
+  obstacles:
+    type: none
+
+simulator:
+  type: dummy_3d
+  dt: 0.05
+  max_steps: 400
+  max_accel: 50.0
+  goal_radius: 2.0
+  drone_radius: 0.4
+
+planner:
+  type: mpc
+  max_speed: 5.0
+  replan_period: 0.1
+  horizon: 20
+  dt_plan: 0.05
+  n_samples: 16
+  resolution: 1.0
+  inflate: 0
+  goal_radius: 2.0
+  safety_margin: 0.5
+  use_prediction: false
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/transfer_dummy

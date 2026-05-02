@@ -24,6 +24,7 @@ Wilson 95 % intervals on rates, mean ± 1.96·SEM on continuous metrics.
 - [The perception-latency cliff: a four-step research saga](#the-perception-latency-cliff-a-four-step-research-saga)
 - [MPC + CHOMP smoothing: layering on a saturated planner is a wash](#mpc--chomp-smoothing-layering-on-a-saturated-planner-is-a-wash)
 - [Action-jump cost: tuning the existing knob beats every layer](#action-jump-cost-tuning-the-existing-knob-beats-every-layer)
+- [AirSim vs dummy_3d transferability: same plan, different physics](#airsim-vs-dummy_3d-transferability-same-plan-different-physics)
 
 ## MPC compute Pareto
 
@@ -595,3 +596,62 @@ and measuring*; each test produced a quantitative result that either
 killed the hypothesis or moved the question one layer deeper. Three
 PRs of code, two null results, and one quantified win — that's the
 shape of honest research.
+
+
+## AirSim vs dummy_3d transferability: same plan, different physics
+
+`examples/exp_transfer_{dummy,airsim}.yaml` — identical Pareto-MPC
+straight-line scenario (start (0,0,30) → goal (0,30,30), no static
+obstacles, max_speed=5, n_samples=16, horizon=20), only `simulator.type`
+differs. Both at altitude 30 m so the AirSim Blocks env's cube clusters
+do not intrude — this isolates *physics* differences, not perception
+or avoidance. n=10 episodes per backend.
+
+| metric | dummy_3d | AirSim (SimpleFlight) | Δ |
+|---|---|---|---|
+| success | 100 % [72.2, 100] | 90 % [59.6, 98.2] | -10 pp (1 t=0 collision after restart) |
+| time-to-goal | 5.65 s ± 0.00 | 4.0 s ± 0.05 (ep 1-9) | **-29 % in AirSim** |
+| path length | 27.88 m ± 0.00 | 28.2 m ± 0.2 (ep 1-9) | +1 % |
+| avg reported speed | 4.98 m/s | 4.86 m/s steady-state (ramps over ~2.5 s) | within 3 % |
+| replans / episode | 43 ± 0 | 29 ± 6 (fewer steps to reach goal) | -33 % |
+| planner_dt | 311 ms | 2385 ms (network round-trip + LiDAR / camera polling overhead) | ~8× wall-clock cost |
+
+Three things stand out, two of which are real and one of which is a
+bridge calibration bug worth flagging:
+
+1. **dummy_3d's velocity tracking is exact**, AirSim's ramps. dummy_3d
+   reaches 5.0 m/s in 0.1 s (its `max_accel=50` allows 5 m/s in 1
+   step). AirSim's SimpleFlight quadrotor takes ~2.5 s to ramp from
+   3 m/s to 4.86 m/s — first-order motor lag plus pitch-to-translate
+   coupling. The implication for ablations: any dummy_3d study that
+   uses `max_speed` as if the drone snaps to that speed instantly is
+   *not* representative of how a real quadrotor would behave during
+   the first 2 s of every replan.
+
+2. **Path lengths agree to 1 %** once the t=0 collision is excluded.
+   The MPC plans the same straight line on both backends; the drone
+   actually flies it. So the *spatial* output of an ablation is
+   transferable; the *temporal* one is not.
+
+3. **AirSim's reported time-to-goal is shorter than dummy's, even
+   though its drone ramps slower.** The arithmetic doesn't add up
+   (28 m / 4 s = 7 m/s avg, but the steady-state speed is 4.86 m/s).
+   The likely cause is that `simContinueForTime(dt)` in the bridge
+   advances AirSim's physics clock by *more than* the requested dt
+   when the engine is busy — the drone moves further per bridge step
+   than the recorded `t` reflects. This is a bridge-calibration bug,
+   not a physics finding; opened as a follow-up.
+
+Methodological takeaway for any future cross-backend ablation: do
+**not** read AirSim's `final_t` as a sim-time delta — read `final
+position` and trust `path_length`. The `max_speed` parameter is also
+backend-relative: the same number means a hard cap in dummy and a
+setpoint-with-ramp in AirSim. Same plan, different physics, same
+spatial behaviour — that's the boundary at which dummy_3d ablations
+generalize.
+
+A *positive* takeaway: 9 / 10 AirSim runs succeeded with no parameter
+tuning beyond the bridge's settle-windows + simPause(True) fix from
+PR #44 / #45. The framework's planner / sensor / scenario boundary
+transfers cleanly from synthetic to AirSim physics — only the
+recorded *time* breaks.
