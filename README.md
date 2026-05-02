@@ -272,16 +272,19 @@ External backends:
   backends without a code change. Optional `cameras: [topic, …]`
   subscribes to `sensor_msgs/Image` and PNG-encodes each frame to
   `state.extra["camera_images"][topic]`, feeding the same
-  `output.save_camera_frames` + `uav-nav video` pipeline.
+  `output.save_camera_frames` + `uav-nav video` pipeline. Set
+  `use_sim_time: true` (with optional `clock_topic` / `sim_time_wall_timeout`)
+  to anchor `state.t` on `/clock` instead of wall-clock — PX4-SITL
+  fast-forward and Gazebo `--lockstep` then speed up the experiment by
+  the same factor as the sim, with the wall-clock timeout protecting
+  the runner from a paused or crashed sim.
 
 ## 🗺️ Roadmap
 
 - 3D perception-latency re-validation in `voxel_world` (Pareto already
   validated — see [docs/findings.md](docs/findings.md)).
-- ROS 2 bridge sim-time: respect `/clock` and `use_sim_time` so
-  PX4-SITL fast-forward stays decoupled from the runner's wall-clock
-  loop (current bridge ticks `rclpy.spin_once` with wall-clock
-  timeouts, fine for real-time but not for fast-forward).
+- 3D AirSim demo run + GIF in the README hero (the bridge is wired but
+  the README still shows the dummy-3D animation).
 
 ## 📄 License
 
