@@ -1,34 +1,38 @@
-# AirSim demo recording: Pareto-MPC + airsim_bridge → photorealistic
-# UE flight + per-step PNG capture for the README hero GIF.
+# AirSim demo: Pareto-MPC + airsim_bridge + LiDAR-built occupancy →
+# real obstacle avoidance through the Blocks Unreal Engine env, with
+# per-step PNG capture for the README hero GIF.
+#
+# Pipeline:
+#   AirSim LiDAR  → bridge.lidars stashes (N,3) ENU points per step
+#                 → pointcloud_occupancy sensor rasterises into a
+#                   60×60×16 occupancy grid (memory: true accumulates
+#                   across the episode, so cubes seen earlier stay
+#                   marked even after they leave LiDAR range)
+#                 → Pareto-MPC plans against that built occupancy
+#                 → bridge sends ENU velocity → AirSim flies it
+#                 → front_center camera captures one PNG per step
+#   then `uav-nav video` ffmpegs the PNGs into an MP4 / GIF.
 #
 # Setup:
 #   pip install airsim                                          # client
 #   ./AirSim/Blocks/LinuxNoEditor/Blocks.sh -RenderOffscreen \
-#       -ResX=960 -ResY=540                                     # server
+#       -ResX=720 -ResY=405                                     # server
+#   (settings.json must declare `LidarFront` + `front_center` —
+#    see scripts/record_airsim_demo.py / docs/airsim.md)
 #
 # Run + render:
-#   uav-nav run examples/exp_airsim_demo.yaml
-#   uav-nav video results/airsim_demo                           # → mp4
-#   ffmpeg -i results/airsim_demo/episode_000_front_center.mp4 \
-#       docs/images/demo_airsim.gif                             # → GIF
-#
-# Why a 3D voxel scenario with no static obstacles:
-#   The planner runs over its own occupancy grid; the AirSim Blocks env
-#   is the rendering + physics layer. A clean voxel world means the
-#   MPC produces a sensible 3D path (start → goal at altitude) and
-#   AirSim drives the drone through whatever the Blocks env happens to
-#   contain. The hero GIF demonstrates "the same Pareto-MPC + bridge
-#   that drives synthetic experiments also drives a UE drone".
+#   python3 scripts/record_airsim_demo.py
 #
 # Coord frames:
-#   start [0, 0, 15]  ENU = NED (0, 0, -15)  — AirSim spawn, 15 m up
-#   goal  [0, 50, 15] ENU = NED (50, 0, -15) — 50 m north
+#   start [0, 0, 5]  ENU = NED (0, 0, -5) — AirSim spawn, 5 m up
+#   goal  [0, 45, 5] ENU = NED (45, 0, -5) — 45 m north at the same
+#                                            altitude
 # (ENU↔NED: x_ENU = y_NED, y_ENU = x_NED, z_ENU = -z_NED — see bridge.)
-# Altitude is set above the Blocks-env cube tops (~10 m) so the
-# obstacle-free planner produces a clean fly-through that AirSim can
-# render without colliding. Front-facing camera (`front_center` /
-# cam name "0") films the northward pass; ~125 sim steps × 0.05s =
-# ~6.3s of GIF at 20fps.
+# At 5 m altitude the cube clusters in Blocks become real obstacles
+# (most are 5–15 m tall), so the LiDAR-driven occupancy + MPC have to
+# find a weaving path north — that's the demo. The 16-channel LiDAR
+# (-25° to +10° vertical FOV, 25 m range) sees both the ground and
+# obstacles ahead within the planner's horizon.
 
 name: airsim_demo
 seed: 42
@@ -37,9 +41,14 @@ num_episodes: 1
 scenario:
   type: voxel_world
   size: [60, 60, 16]
-  start: [0.0, 0.0, 30.0]
-  goal:  [0.0, 50.0, 30.0]
+  # Going EAST (+x ENU = +y NED) from the AirSim spawn — the cube
+  # clusters in that direction are more spread out than due north,
+  # giving the LiDAR-built occupancy a clean weaving path.
+  start: [0.0, 0.0, 5.0]
+  goal:  [45.0, 0.0, 12.0]
   resolution: 1.0
+  # The planner's *static* occupancy is empty; obstacles are discovered
+  # online by the pointcloud_occupancy sensor as the drone flies.
   obstacles:
     type: none
 
@@ -49,7 +58,7 @@ simulator:
   port: 41451
   vehicle: Drone1
   dt: 0.05
-  max_steps: 200
+  max_steps: 400
   goal_radius: 2.0
   # Real-server settle windows: without these, the first step() after
   # the bridge teleports to scenario.start sometimes inherits a stale
@@ -57,27 +66,37 @@ simulator:
   # episode dies at t=0 with `outcome=collision`.
   settle_after_reset: 1.0
   settle_after_teleport: 0.3
+  # Names of LiDAR sensors declared on the AirSim side (settings.json).
+  # Each step, the bridge polls getLidarData(name) and stashes the (N,3)
+  # ENU point cloud at state.extra["lidar_points"][name] for the
+  # pointcloud_occupancy sensor to consume.
+  lidars: [LidarFront]
   cameras:
     - {name: "front_center", image_type: scene}
 
 planner:
   type: mpc
-  max_speed: 8.0
-  replan_period: 0.2
-  horizon: 20
+  max_speed: 3.0          # slow enough to react to LiDAR-built occupancy
+  replan_period: 0.1      # 10 Hz — refresh the plan as the map grows
+  horizon: 40
   dt_plan: 0.05
-  n_samples: 16
+  n_samples: 32
   resolution: 1.0
-  inflate: 0
+  inflate: 1              # 1-cell dilation around mapped obstacles
   goal_radius: 2.0
-  safety_margin: 0.5
-  use_prediction: false
+  safety_margin: 1.0
+  use_prediction: false   # no peer / dyn obstacles in this scenario
   w_goal: 1.0
-  w_obs: 100.0
+  w_obs: 400.0            # heavy avoidance bias — descending into a
+                          # half-mapped cube wall costs more than a detour
   w_smooth: 0.05
 
 sensor:
-  type: perfect
+  type: pointcloud_occupancy
+  resolution: 1.0
+  memory: true            # accumulate across the episode
+  inflate: 2              # geometric safety margin in the built map
+  range_m: 20.0           # ignore returns farther than 20 m
 
 output:
   dir: results/airsim_demo
