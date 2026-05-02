@@ -432,7 +432,12 @@ External backends:
   setpoints and NED→ENU kinematics readback. Run via
   `examples/exp_airsim.yaml` after `pip install airsim` and starting
   any AirSim binary; mock-injectable client makes the conversion logic
-  CI-testable without an AirSim install.
+  CI-testable without an AirSim install. Optional `lidars: [name, …]`
+  in the simulator config polls `getLidarData(name)` per step and
+  exposes the (N, 3) ENU point cloud at
+  `state.extra["lidar_points"][name]` — point-cloud → occupancy
+  rasterization is left to consumer code so this bridge stays
+  perception-agnostic.
 - **ROS 2** (`uav_nav_lab/sim/ros2_bridge.py`) is wired end-to-end —
   publishes `geometry_msgs/Twist` on `/cmd_vel`, subscribes to
   `nav_msgs/Odometry` on `/odom` (and optional `std_msgs/Bool` on

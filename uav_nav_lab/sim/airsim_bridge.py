@@ -28,6 +28,17 @@ Async commands: AirSim's moveByVelocityAsync returns a future; we
 join() before reading kinematics to avoid race-y "command in flight"
 states. Combined with simPause / simContinueForTime, the step is
 synchronous from the runner's perspective.
+
+LiDAR sensors:
+  - Configure on the AirSim side via settings.json (one entry per
+    sensor with a unique name).
+  - List the names in the bridge config (`simulator.lidars: [Lidar1, …]`)
+    to have the bridge poll `getLidarData(name)` after each step and
+    stash the converted (N, 3) ENU point cloud at
+    `state.extra["lidar_points"][name]`. Empty list = no polling.
+  - Downstream rasterization / fusion (point cloud → occupancy /
+    distance field) is intentionally left to consumer code; this
+    bridge does not pin a perception architecture.
 """
 
 from __future__ import annotations
@@ -53,6 +64,24 @@ def _ned_to_enu(p: np.ndarray) -> np.ndarray:
     return np.array([p[1], p[0], -p[2]])
 
 
+def _ned_pointcloud_to_enu(point_cloud_flat: Any) -> np.ndarray:
+    """AirSim's `LidarData.point_cloud` is a flat list of NED triples
+    (x, y, z) in vehicle-local frame. Reshape to (N, 3) and convert to
+    ENU with the same (x, y, z) → (y, x, -z) flip used for poses.
+
+    Returns shape (N, 3) — empty (0, 3) array if the readout is empty
+    or malformed (e.g. lidar not yet populated)."""
+    arr = np.asarray(list(point_cloud_flat), dtype=float)
+    if arr.size == 0 or arr.size % 3 != 0:
+        return np.zeros((0, 3))
+    ned = arr.reshape(-1, 3)
+    enu = np.empty_like(ned)
+    enu[:, 0] = ned[:, 1]
+    enu[:, 1] = ned[:, 0]
+    enu[:, 2] = -ned[:, 2]
+    return enu
+
+
 @SIM_REGISTRY.register("airsim")
 class AirSimBridge(SimInterface):
     def __init__(
@@ -64,6 +93,7 @@ class AirSimBridge(SimInterface):
         vehicle: str = "Drone1",
         goal_radius: float = 1.5,
         max_steps: int = 2000,
+        lidars: list[str] | None = None,
         client: Any = None,
     ) -> None:
         self.dt = float(dt)
@@ -73,6 +103,11 @@ class AirSimBridge(SimInterface):
         self.vehicle = vehicle
         self.goal_radius = float(goal_radius)
         self.max_steps = int(max_steps)
+        # Names of LiDAR sensors configured on the AirSim side (in
+        # settings.json). Each step we pull `getLidarData(name)` and stash
+        # the converted (N, 3) ENU point cloud at
+        # state.extra["lidar_points"][name]. Empty / unset = no polling.
+        self.lidars: list[str] = list(lidars or [])
         # `client` lets tests inject a fake airsim client; in production
         # the real client is created lazily on first reset/step.
         self._client: Any = client
@@ -81,6 +116,7 @@ class AirSimBridge(SimInterface):
 
     @classmethod
     def from_config(cls, cfg: Mapping[str, Any], scenario: Any) -> "AirSimBridge":
+        lidars_cfg = cfg.get("lidars", []) or []
         return cls(
             dt=float(cfg.get("dt", 0.05)),
             scenario=scenario,
@@ -89,6 +125,7 @@ class AirSimBridge(SimInterface):
             vehicle=str(cfg.get("vehicle", "Drone1")),
             goal_radius=float(cfg.get("goal_radius", 1.5)),
             max_steps=int(cfg.get("max_steps", 2000)),
+            lidars=[str(name) for name in lidars_cfg],
         )
 
     def _ensure_client(self) -> Any:
@@ -181,6 +218,17 @@ class AirSimBridge(SimInterface):
         self._state.velocity = vel_enu[:ndim]
         self._state.t += self.dt
         self._step_count += 1
+        # Poll any configured LiDAR sensors. We expose raw (N, 3) ENU
+        # point clouds via state.extra["lidar_points"][name]; downstream
+        # rasterization / fusion is the consumer's job — keeps this
+        # bridge from committing to a particular perception architecture.
+        if self.lidars:
+            self._state.extra["lidar_points"] = {
+                name: _ned_pointcloud_to_enu(
+                    client.getLidarData(name, vehicle_name=self.vehicle).point_cloud
+                )
+                for name in self.lidars
+            }
         # AirSim's collision flag is the source of truth in physics-simulated
         # worlds; the scenario's occupancy is only used for planner input.
         collision = bool(client.simGetCollisionInfo(vehicle_name=self.vehicle).has_collided)
