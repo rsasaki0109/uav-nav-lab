@@ -12,10 +12,16 @@ every example YAML carries its own validated finding.**
 [![License](https://img.shields.io/badge/license-Apache%202.0-green)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/rsasaki0109/uav-nav-lab?style=social)](https://github.com/rsasaki0109/uav-nav-lab/stargazers)
 
-<img src="docs/images/demo_mpc.gif" alt="Pareto-MPC routing through bouncing dynamic obstacles" width="540">
-
-*Pareto-MPC (n_samples=16, horizon=20) routing through three bouncing
-dynamic obstacles to a goal — same scenario used for every result below.*
+<table>
+<tr>
+<td><img src="docs/images/demo_mpc.gif" alt="2D Pareto-MPC routing through three bouncing dynamic obstacles" width="380"></td>
+<td><img src="docs/images/demo_3d.gif" alt="3D Pareto-MPC episode on a 40×40×12 voxel world with three bouncing dynamic obstacles" width="380"></td>
+</tr>
+<tr>
+<td align="center"><i>2D — Pareto-MPC (n=16, h=20) through three bouncing obstacles.</i></td>
+<td align="center"><i>3D — same planner family on a 40×40×12 voxel world.</i></td>
+</tr>
+</table>
 
 </div>
 
