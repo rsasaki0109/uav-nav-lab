@@ -1,0 +1,82 @@
+# 3D multi-drone N=4 packed (240 obstacles) with peer prediction OFF.
+# Companion to exp_multi_drone_3d_4_packed.yaml: same world / drones /
+# weights, only `use_prediction: false`. Pairs with _dense_indep to
+# trace what peer prediction buys across the obstacle-density sweep.
+#
+# Result (n=30):
+#   per-drone success: 18.3 % [12.4, 26.2]   (packed w/ pred: 46.7 %)
+#   joint success:      0.0 % [0.0, 11.4]    (packed w/ pred: 10.0 %)
+#   indep `per^4`:      0.11 %
+#   Δ over indep:      -0.1 pp                (packed w/ pred: +5.2 pp)
+#
+# Joint success collapses to 0 / 30 — at this density, peer prediction
+# is the *only* thing keeping joint episodes alive at all. Per-drone
+# also drops (-28.4 pp) as crossing pairs run through each other. The
+# combination of dense static obstacles + no peer awareness leaves no
+# room to recover from a head-on encounter, unlike the dense_indep
+# case where the same removal still left some clear corridors.
+# See docs/findings.md.
+#
+# Reproduce:
+#   uav-nav run examples/exp_multi_drone_3d_4_packed_indep.yaml
+#   uav-nav eval results/multi_drone_3d_4_packed_indep
+
+name: multi_drone_3d_4_packed_indep
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: multi_drone_voxel
+  size: [40, 40, 12]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 240                 # match packed baseline
+    seed: 7
+  drones:
+    - name: east
+      start: [3.0, 20.0, 6.0]
+      goal:  [37.0, 20.0, 6.0]
+      radius: 0.4
+    - name: west
+      start: [37.0, 20.0, 6.0]
+      goal:  [3.0, 20.0, 6.0]
+      radius: 0.4
+    - name: north
+      start: [20.0, 3.0, 6.0]
+      goal:  [20.0, 37.0, 6.0]
+      radius: 0.4
+    - name: south
+      start: [20.0, 37.0, 6.0]
+      goal:  [20.0, 3.0, 6.0]
+      radius: 0.4
+
+simulator:
+  type: dummy_3d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: mpc
+  max_speed: 8.0
+  replan_period: 0.2
+  horizon: 40
+  dt_plan: 0.05
+  n_samples: 8
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  safety_margin: 0.5
+  use_prediction: false        # <-- only difference from _packed.yaml
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/multi_drone_3d_4_packed_indep
