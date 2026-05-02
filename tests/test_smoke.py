@@ -802,6 +802,104 @@ def test_ros2_bridge_step_round_trips_enu_via_mock_adapter() -> None:
     assert info.collision is False
 
 
+def test_ros2_bridge_surfaces_lidar_camera_via_mock_adapter() -> None:
+    """When `lidars`/`cameras` topics are configured, Ros2Bridge.step() should
+    populate `state.extra['lidar_points'][topic]` and `['camera_images'][topic]`
+    from the adapter — same keys as AirSimBridge so the pointcloud_occupancy
+    sensor and `uav-nav video` CLI consume both backends transparently."""
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+    from uav_nav_lab.sim.ros2_bridge import Ros2Bridge
+
+    grid_cls = SCENARIO_REGISTRY.get("grid_world")
+    sc = grid_cls.from_config(
+        {"size": [10, 10], "start": [1.0, 1.0], "goal": [9.0, 9.0], "obstacles": {"type": "none"}}
+    )
+
+    class FakeAdapter:
+        def __init__(self) -> None:
+            self._pose = np.array([2.0, 3.0, 1.0])
+            self._vel = np.array([0.0, 0.0, 0.0])
+            self._clouds = {
+                "/front_lidar": np.array([[1.0, 0.0, 0.0], [0.0, 2.0, 0.5]], dtype=np.float32),
+                "/rear_lidar": np.array([[-1.0, -1.0, 0.0]], dtype=np.float32),
+            }
+            self._images = {
+                "/front_camera/image_raw": b"PNG_FRONT",
+                "/down_camera/image_raw": b"PNG_DOWN",
+            }
+
+        def publish_velocity(self, vx, vy, vz):  # noqa: ARG002
+            pass
+
+        def latest_pose_velocity(self):
+            return (self._pose.copy(), self._vel.copy())
+
+        def latest_collision(self) -> bool:
+            return False
+
+        def tick(self, _timeout_s: float) -> None:
+            pass
+
+        def teleport(self, _pos_enu: np.ndarray) -> None:
+            pass
+
+        def latest_lidar_clouds(self):
+            return {k: v.copy() for k, v in self._clouds.items()}
+
+        def latest_camera_images(self):
+            return dict(self._images)
+
+    fake = FakeAdapter()
+    bridge = Ros2Bridge(
+        dt=0.05,
+        scenario=sc,
+        lidars=["/front_lidar", "/rear_lidar"],
+        cameras=["/front_camera/image_raw", "/down_camera/image_raw"],
+        adapter=fake,
+    )
+    bridge.reset()
+    out_state, _ = bridge.step(np.array([0.0, 0.0]))
+
+    clouds = out_state.extra["lidar_points"]
+    assert set(clouds.keys()) == {"/front_lidar", "/rear_lidar"}
+    assert clouds["/front_lidar"].shape == (2, 3)
+    assert clouds["/rear_lidar"].shape == (1, 3)
+    # Pass-through: bridge does NOT flip frames for ROS 2 (REP-103 is ENU).
+    assert np.allclose(clouds["/front_lidar"][0], np.array([1.0, 0.0, 0.0]))
+
+    cams = out_state.extra["camera_images"]
+    assert cams["/front_camera/image_raw"] == b"PNG_FRONT"
+    assert cams["/down_camera/image_raw"] == b"PNG_DOWN"
+
+
+def test_ros2_bridge_omits_extras_when_lidars_cameras_not_configured() -> None:
+    """If neither lidars nor cameras are configured the bridge must not
+    poll those adapter methods — keeps the no-sensor case lightweight and
+    means adapters that don't implement them still work."""
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+    from uav_nav_lab.sim.ros2_bridge import Ros2Bridge
+
+    grid_cls = SCENARIO_REGISTRY.get("grid_world")
+    sc = grid_cls.from_config(
+        {"size": [10, 10], "start": [1.0, 1.0], "goal": [9.0, 9.0], "obstacles": {"type": "none"}}
+    )
+
+    class MinimalAdapter:
+        # Deliberately omits latest_lidar_clouds / latest_camera_images.
+        def publish_velocity(self, *_args): pass
+        def latest_pose_velocity(self):
+            return (np.zeros(3), np.zeros(3))
+        def latest_collision(self): return False
+        def tick(self, _t): pass
+        def teleport(self, _p): pass
+
+    bridge = Ros2Bridge(dt=0.05, scenario=sc, adapter=MinimalAdapter())
+    bridge.reset()
+    out_state, _ = bridge.step(np.array([0.0, 0.0]))
+    assert "lidar_points" not in out_state.extra
+    assert "camera_images" not in out_state.extra
+
+
 def test_rrt_star_returns_shorter_path_than_rrt_on_open_world() -> None:
     """RRT* rewiring should produce a path no longer than plain RRT on
     average. We compare on a wide-open world where rewiring has clear

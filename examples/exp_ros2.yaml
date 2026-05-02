@@ -39,6 +39,22 @@ simulator:
   dt: 0.05
   max_steps: 1500
   goal_radius: 1.5
+  # Optional sensor topics — uncomment to subscribe.
+  #
+  # PointCloud2 topics. Each step's latest cloud is decoded to (N, 3)
+  # ENU points and stashed at state.extra["lidar_points"][topic]. Pair
+  # with `sensor: { type: pointcloud_occupancy, ... }` to feed the
+  # planner from real LiDAR returns instead of ground-truth occupancy.
+  # lidars:
+  #   - /scan/points
+  #
+  # sensor_msgs/Image topics. Each step's latest frame is encoded to
+  # PNG (rgb8/bgr8/rgba8/mono8) and lands at
+  # state.extra["camera_images"][topic]. Combine with
+  # `output.save_camera_frames: true` and `uav-nav video <run_dir>` to
+  # build per-episode mp4s from a real ROS 2 sim.
+  # cameras:
+  #   - /front_camera/image_raw
 
 planner:
   type: mpc
