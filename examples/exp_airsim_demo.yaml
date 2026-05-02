@@ -1,0 +1,84 @@
+# AirSim demo recording: Pareto-MPC + airsim_bridge → photorealistic
+# UE flight + per-step PNG capture for the README hero GIF.
+#
+# Setup:
+#   pip install airsim                                          # client
+#   ./AirSim/Blocks/LinuxNoEditor/Blocks.sh -RenderOffscreen \
+#       -ResX=960 -ResY=540                                     # server
+#
+# Run + render:
+#   uav-nav run examples/exp_airsim_demo.yaml
+#   uav-nav video results/airsim_demo                           # → mp4
+#   ffmpeg -i results/airsim_demo/episode_000_front_center.mp4 \
+#       docs/images/demo_airsim.gif                             # → GIF
+#
+# Why a 3D voxel scenario with no static obstacles:
+#   The planner runs over its own occupancy grid; the AirSim Blocks env
+#   is the rendering + physics layer. A clean voxel world means the
+#   MPC produces a sensible 3D path (start → goal at altitude) and
+#   AirSim drives the drone through whatever the Blocks env happens to
+#   contain. The hero GIF demonstrates "the same Pareto-MPC + bridge
+#   that drives synthetic experiments also drives a UE drone".
+#
+# Coord frames:
+#   start [0, 0, 15]  ENU = NED (0, 0, -15)  — AirSim spawn, 15 m up
+#   goal  [0, 50, 15] ENU = NED (50, 0, -15) — 50 m north
+# (ENU↔NED: x_ENU = y_NED, y_ENU = x_NED, z_ENU = -z_NED — see bridge.)
+# Altitude is set above the Blocks-env cube tops (~10 m) so the
+# obstacle-free planner produces a clean fly-through that AirSim can
+# render without colliding. Front-facing camera (`front_center` /
+# cam name "0") films the northward pass; ~125 sim steps × 0.05s =
+# ~6.3s of GIF at 20fps.
+
+name: airsim_demo
+seed: 42
+num_episodes: 1
+
+scenario:
+  type: voxel_world
+  size: [60, 60, 16]
+  start: [0.0, 0.0, 30.0]
+  goal:  [0.0, 50.0, 30.0]
+  resolution: 1.0
+  obstacles:
+    type: none
+
+simulator:
+  type: airsim
+  host: 127.0.0.1
+  port: 41451
+  vehicle: Drone1
+  dt: 0.05
+  max_steps: 200
+  goal_radius: 2.0
+  # Real-server settle windows: without these, the first step() after
+  # the bridge teleports to scenario.start sometimes inherits a stale
+  # collision flag from AirSim's just-cleared physics state, so the
+  # episode dies at t=0 with `outcome=collision`.
+  settle_after_reset: 1.0
+  settle_after_teleport: 0.3
+  cameras:
+    - {name: "front_center", image_type: scene}
+
+planner:
+  type: mpc
+  max_speed: 8.0
+  replan_period: 0.2
+  horizon: 20
+  dt_plan: 0.05
+  n_samples: 16
+  resolution: 1.0
+  inflate: 0
+  goal_radius: 2.0
+  safety_margin: 0.5
+  use_prediction: false
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/airsim_demo
+  save_camera_frames: true

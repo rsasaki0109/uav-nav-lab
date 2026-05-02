@@ -105,6 +105,8 @@ class AirSimBridge(SimInterface):
         lidars: list[str] | None = None,
         cameras: list[Mapping[str, Any]] | None = None,
         depths: list[Mapping[str, Any]] | None = None,
+        settle_after_reset: float = 0.0,
+        settle_after_teleport: float = 0.0,
         client: Any = None,
     ) -> None:
         self.dt = float(dt)
@@ -143,6 +145,15 @@ class AirSimBridge(SimInterface):
             }
             for d in (depths or [])
         ]
+        # Sleep windows after `client.reset()` and after the teleport
+        # to the scenario start, in seconds. Without these, real
+        # AirSim sometimes carries a transient collision flag from
+        # the just-cleared physics state into the first step(). Both
+        # default to 0 so unit tests stay fast; real-server runs
+        # should set settle_after_reset≈1.0 and settle_after_teleport
+        # ≈0.3 in YAML (`simulator.settle_after_reset: 1.0`).
+        self.settle_after_reset = float(settle_after_reset)
+        self.settle_after_teleport = float(settle_after_teleport)
         # `client` lets tests inject a fake airsim client; in production
         # the real client is created lazily on first reset/step.
         self._client: Any = client
@@ -165,6 +176,8 @@ class AirSimBridge(SimInterface):
             lidars=[str(name) for name in lidars_cfg],
             cameras=list(cameras_cfg),
             depths=list(depths_cfg),
+            settle_after_reset=float(cfg.get("settle_after_reset", 0.0)),
+            settle_after_teleport=float(cfg.get("settle_after_teleport", 0.0)),
         )
 
     def _ensure_client(self) -> Any:
@@ -253,6 +266,12 @@ class AirSimBridge(SimInterface):
         if seed is not None:
             self.scenario.reseed(seed)
         client.reset()
+        # Let the world settle after reset() before issuing API calls.
+        # Without this, AirSim sometimes carries a transient collision
+        # flag from the just-cleared state into the first step().
+        if hasattr(client, "simPause"):
+            import time as _time
+            _time.sleep(self.settle_after_reset)
         client.enableApiControl(True, self.vehicle)
         client.armDisarm(True, self.vehicle)
         if initial_position is not None:
@@ -270,6 +289,11 @@ class AirSimBridge(SimInterface):
                     airsim.to_quaternion(0.0, 0.0, 0.0),
                 )
                 client.simSetVehiclePose(pose, ignore_collision=True, vehicle_name=self.vehicle)
+                # Same reason: give the engine a tick to register the
+                # new pose before the runner starts step()ing it.
+                if hasattr(client, "simPause"):
+                    import time as _time
+                    _time.sleep(self.settle_after_teleport)
             except ImportError:  # pragma: no cover
                 pass
         ndim = self.scenario.ndim
