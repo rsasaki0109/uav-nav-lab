@@ -1,0 +1,77 @@
+# 3D multi-drone N=4 with 8× the static obstacles (240 vs 30 baseline).
+# Heavy-density end of the 3D N=4 obstacle-count sweep. Same world /
+# crossing pattern as exp_multi_drone_3d_4.yaml.
+#
+# Result (n=30):
+#   per-drone success: 46.7 % [38.0, 55.6]
+#   joint success:     10.0 % [3.5, 25.6]
+#   indep `per^4`:     4.8 %
+#   Δ over indep:      +5.2 pp   (vs +8.0 pp at 120 obstacles)
+#
+# Δ is non-monotonic in obstacle count: peaks around the 120-obstacle
+# cell, then declines as per-drone failure dominates joint outcomes.
+# See docs/findings.md for the unified "intermediate free volume" claim.
+#
+# Reproduce:
+#   uav-nav run examples/exp_multi_drone_3d_4_packed.yaml
+#   uav-nav eval results/multi_drone_3d_4_packed
+
+name: multi_drone_3d_4_packed
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: multi_drone_voxel
+  size: [40, 40, 12]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 240                 # 8× the 30-obstacle baseline
+    seed: 7
+  drones:
+    - name: east
+      start: [3.0, 20.0, 6.0]
+      goal:  [37.0, 20.0, 6.0]
+      radius: 0.4
+    - name: west
+      start: [37.0, 20.0, 6.0]
+      goal:  [3.0, 20.0, 6.0]
+      radius: 0.4
+    - name: north
+      start: [20.0, 3.0, 6.0]
+      goal:  [20.0, 37.0, 6.0]
+      radius: 0.4
+    - name: south
+      start: [20.0, 37.0, 6.0]
+      goal:  [20.0, 3.0, 6.0]
+      radius: 0.4
+
+simulator:
+  type: dummy_3d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: mpc
+  max_speed: 8.0
+  replan_period: 0.2
+  horizon: 40
+  dt_plan: 0.05
+  n_samples: 8
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  safety_margin: 0.5
+  use_prediction: true
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/multi_drone_3d_4_packed
