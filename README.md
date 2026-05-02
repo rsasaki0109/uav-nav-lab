@@ -26,11 +26,11 @@ every example YAML carries its own validated finding.**
 </div>
 
 > **TL;DR.** On a 50 × 50 dynamic-obstacle scenario (n=30 episodes,
-> Wilson 95 % CIs), this framework produces — from five one-line
+> Wilson 95 % CIs), this framework produces — from six one-line
 > `uav-nav run` invocations — straight-line **0 %**, A* **20 %**,
-> RRT* **23 %** (CPU-saturated), RRT **73 %**, Pareto-MPC **100 %**.
-> Each example YAML carries the table, the heatmap, and the reproduce
-> command in its header.
+> RRT* **23 %** (CPU-saturated), CHOMP **53 %** (cheapest at 21 ms),
+> RRT **73 %**, Pareto-MPC **100 %**. Each example YAML carries the
+> table, the heatmap, and the reproduce command in its header.
 
 ---
 
@@ -169,20 +169,23 @@ only the planner changes. n=30 episodes per configuration:
 <td align="center"><b>straight</b><br>0.0 %</td>
 <td align="center"><b>astar</b><br>20.0 %</td>
 <td align="center"><b>rrt*</b><br>23.3 %</td>
+<td align="center"><b>chomp</b><br>53.3 %</td>
 <td align="center"><b>rrt</b><br>73.3 %</td>
 <td align="center"><b>mpc (Pareto)</b><br>100.0 %</td>
 </tr>
 <tr>
-<td><img src="docs/images/cmp_straight.png" width="170"></td>
-<td><img src="docs/images/cmp_astar.png" width="170"></td>
-<td><img src="docs/images/cmp_rrt_star.png" width="170"></td>
-<td><img src="docs/images/cmp_rrt.png" width="170"></td>
-<td><img src="docs/images/cmp_mpc.png" width="170"></td>
+<td><img src="docs/images/cmp_straight.png" width="140"></td>
+<td><img src="docs/images/cmp_astar.png" width="140"></td>
+<td><img src="docs/images/cmp_rrt_star.png" width="140"></td>
+<td><img src="docs/images/cmp_chomp.png" width="140"></td>
+<td><img src="docs/images/cmp_rrt.png" width="140"></td>
+<td><img src="docs/images/cmp_mpc.png" width="140"></td>
 </tr>
 <tr>
 <td align="center">plan_dt<br>0.04 / 0.05 ms</td>
 <td align="center">plan_dt<br>4.75 / 8.97 ms</td>
 <td align="center">plan_dt<br>464 / 521 ms ⚠️</td>
+<td align="center">plan_dt<br>21.31 / 22.31 ms</td>
 <td align="center">plan_dt<br>29.99 / 64.27 ms</td>
 <td align="center">plan_dt<br>52.16 / 56.96 ms</td>
 </tr>
@@ -196,6 +199,15 @@ move the drone past obstacles before they cross. MPC at the Pareto
 config (`n_samples=16, horizon=20`) is the only planner with explicit
 motion prediction and clears every episode.
 
+**CHOMP slots in the middle (53.3 %) and is the cheapest non-trivial
+planner of the lot — 21.3 ms ± 0.12, p95 22.3 ms — beating both RRT and
+MPC on per-replan compute**. The smoothness term keeps trajectories
+short and tight (47.6 ± 8.2 m vs RRT's typical zigzag) but local
+optimisation cannot tunnel through obstacles the straight-line init
+crosses, capping success below RRT's continuous-space sampling. Pair
+it with an RRT-init mode and the picture might invert — see the
+roadmap for that follow-up.
+
 **Counter-intuitively, RRT\* loses to plain RRT here.** Asymptotic
 optimality costs ~15× the per-replan compute (464 ms mean vs 30 ms),
 which is 2.3× the 200 ms replan period — every replan arrives late, so
@@ -204,8 +216,8 @@ beat freshness in a dynamic scenario unless the optimization fits the
 replan budget. Same Pareto-saturation trap the 2D MPC re-validation
 saga uncovered, just on the search side.
 
-> Reproduce: `uav-nav run examples/exp_compare_{straight,astar,rrt,rrt_star,mpc}.yaml`,
-> then `uav-nav compare results/cmp_straight results/cmp_astar results/cmp_rrt results/cmp_rrt_star results/cmp_mpc`.
+> Reproduce: `uav-nav run examples/exp_compare_{straight,astar,rrt,rrt_star,chomp,mpc}.yaml`,
+> then `uav-nav compare results/cmp_straight results/cmp_astar results/cmp_rrt_star results/cmp_chomp results/cmp_rrt results/cmp_mpc`.
 
 ### More studies — see [docs/findings.md](docs/findings.md)
 

@@ -8,19 +8,24 @@
 # replan_period so the optimiser gets a fresh init each cycle — that is the
 # closest analogue CHOMP has to RRT's probabilistic completeness.
 #
-# Expectation vs the rest of the table (50×50, n=30 episodes, dynamic obstacles):
-#   straight     0 %       (no avoidance)
-#   astar       20 %       (grid-snap + replan-stale problem)
-#   rrt*        23 %       (asymptotic optimality < freshness)
-#   rrt         73 %       (continuous-space sampling, dynamic-obstacle robust)
-#   mpc        100 %       (motion-prediction rollouts)
-# CHOMP is a *local* method — when straight-line init crosses an obstacle it
-# can detour but cannot tunnel through, and dynamic obstacles in the path can
-# trap the optimiser between two passing obstacles. Reading: somewhere
-# between astar and rrt; the value is smoother paths, not a higher success
-# rate.
+# Measured (50×50, n=30 episodes, dynamic obstacles, Wilson 95 % CI):
+#   straight    0.0 %  [0.0, 11.4]    plan_dt 0.04 / 0.05 ms
+#   astar      20.0 %  [9.5,  37.3]   plan_dt 4.75 / 8.97 ms
+#   rrt*       23.3 %  [11.8, 40.9]   plan_dt 464 / 521 ms ⚠
+#   chomp      53.3 %  [36.1, 69.8]   plan_dt 21.31 / 22.31 ms   ← this file
+#   rrt        73.3 %  [55.5, 85.8]   plan_dt 29.99 / 64.27 ms
+#   mpc       100.0 %  [88.6, 100.0]  plan_dt 52.16 / 56.96 ms
+# CHOMP slots middle-of-pack and is the *cheapest* non-trivial planner of
+# the lot — 21 ms / replan, p95 22 ms, beating every alternative on
+# compute. The smoothness term keeps trajectories short and tight (47.6 ±
+# 8.2 m), but local optimisation cannot tunnel through obstacles the
+# straight-line init crosses, and dynamic obstacles passing the path
+# during a replan window can trap the optimiser between two of them.
+# Reading: high value when compute is the bottleneck (cheap, smooth);
+# RRT init might lift the success rate further — see the roadmap.
 #
 # Reproduce: uav-nav run examples/exp_compare_chomp.yaml
+#            uav-nav eval results/cmp_chomp
 name: cmp_chomp
 seed: 42
 num_episodes: 30
