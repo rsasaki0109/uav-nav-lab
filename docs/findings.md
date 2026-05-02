@@ -280,3 +280,50 @@ n_samples set's mean, which has small magnitude). Default is now 1.0,
 identified by the success cliff in the sweep. The right way to pick a
 default is to *measure where the success cliff is*, not to eyeball it
 from cost magnitudes — same lesson as the Pareto-config retrofit.
+
+### 3D MPPI: the smoothness-temperature curve inverts vs 2D
+
+`examples/exp_compare_mppi_3d.yaml` — same scenario shape as
+`exp_3d_predictive.yaml` (voxel_world 40×40×12, 3 bouncing dynamic
+obstacles, 60 static, perfect sensor) at the validated 3D Pareto
+config (n_samples=8, horizon=20). Sweep `temperature`:
+
+| temperature | 2D succ | 3D succ | 2D &#124;Δcmd&#124; | 3D &#124;Δcmd&#124; |
+|---|---|---|---|---|
+| 0.1 (≈argmin) | 96.7 % | 80.0 [66, 89] | 0.32 | **0.087** ← 3D smoothest |
+| **1.0** | **100 %** | **86.7** [71, 95] | 0.29 | 0.213 |
+| 10 (smooth) | 86.7 % | 66.7 % (n=12) | **0.22** ← 2D smoothest | 0.180 |
+| 100 (uniform) | 0.0 % | 16.7 % (n=12) | n/a | 0.106 |
+
+Three findings:
+
+1. **No temperature optimum flip — the 2D default transfers.** T=1.0
+   is nominally best in both, although the 3D Pareto landscape is
+   *broader*: T=0.1 and T=1.0 are not statistically distinguishable in
+   3D (Wilson 95 % CIs [66, 89] vs [71, 95] overlap). The useful
+   range extends from T=0.1 to T=1.0 in 3D vs a tighter peak in 2D.
+   Hypothesis going in (temperature flips like n_samples does) was
+   refuted.
+
+2. **The smoothness-temperature relationship inverts in 3D.** In 2D,
+   higher temperature → smoother control: T=10 had |Δcmd|=0.22, the
+   lowest of any 2D MPPI cell. In 3D the *opposite* — T=0.1 has
+   |Δcmd|=0.087 (60 % lower than T=1.0's 0.213) and T=10 climbs back
+   to 0.180. The 3D cost landscape has more local optima (escape in
+   5+ directions per voxel), so weighted averaging across modes ADDS
+   command jitter rather than removing it. Fibonacci-sphere sampling
+   is already robust enough that argmin doesn't jitter in 3D; in 2D
+   the circular sampling has less coverage so argmin selection
+   bounces between adjacent samples.
+
+3. **Best 3D MPPI (86.7 %) doesn't beat best 3D MPC (88 % at the same
+   Pareto config).** Same Pareto-saturation lesson as 2D and the
+   mpc_chomp thread: switching planner family doesn't break a tuned
+   MPC baseline, regardless of dimensionality.
+
+Engineering takeaway: temperature in MPPI is *broadly tunable* in 3D
+and the 2D default (T=1.0) is the right starting point. But the
+smoothness/temperature curve has a different shape per dimension —
+always re-tune temperature for the smoothness axis specifically if
+that's the metric you care about, since the 2D pattern (more
+averaging = smoother) inverts.
