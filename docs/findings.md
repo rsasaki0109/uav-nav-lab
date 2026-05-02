@@ -20,6 +20,7 @@ Wilson 95 % intervals on rates, mean ± 1.96·SEM on continuous metrics.
 - [Wind miscalibration: planner belief must match sim reality](#wind-miscalibration-planner-belief-must-match-sim-reality)
 - [The perception-latency cliff: a four-step research saga](#the-perception-latency-cliff-a-four-step-research-saga)
 - [MPC + CHOMP smoothing: layering on a saturated planner is a wash](#mpc--chomp-smoothing-layering-on-a-saturated-planner-is-a-wash)
+- [MPPI vs MPC: switching planner family doesn't break a tuned baseline](#mppi-vs-mpc-switching-planner-family-doesnt-break-a-tuned-baseline)
 
 ## MPC compute Pareto
 
@@ -292,6 +293,53 @@ Engineering takeaway: simple model-free estimators can dominate more
 sophisticated ones when the motion-model assumption breaks. Picking the
 estimator that *actually wins* is more useful than picking the one that
 sounds fanciest — the framework is built to make that picking trivial.
+
+## MPPI vs MPC: switching planner family doesn't break a tuned baseline
+
+`examples/exp_compare_mppi.yaml` — Model Predictive Path Integral, the
+sampling MPC's stochastic cousin. Same Dijkstra cost-to-go heuristic,
+same n direction samples, same horizon-step rollouts, same per-rollout
+scoring. The only substitution is at the selection step:
+
+  weight_i = exp(-(cost_i - cost_min) / temperature)
+  action   = sum(weight_i * action_i)
+
+Sweeping `temperature` on the predictive scenario (n=30, Wilson 95 % CI):
+
+| `temperature` | success | mean &#124;Δcmd&#124;/step | avg speed |
+|---|---|---:|---:|
+| 0.1 (≈ argmin)  | 96.7 % [83, 99]  | 0.319 | 9.86 m/s |
+| **1.0** (sweet spot) | **100.0 %** [89, 100] | 0.291 | 9.56 m/s |
+| 10.0 (smoothest) | 86.7 % [70, 95] | 0.223 | 2.83 m/s (collapse) |
+| 100.0 (uniform-mean) | 0.0 % [0, 11] | n/a | 0.81 m/s |
+
+Two orthogonal findings:
+
+1. **MPPI beats default MPC on both axes (96.7 % / 0.32 → 100 % / 0.29) but
+   loses to tuned MPC on smoothness** (`w_smooth=0.5`: 100 % / 0.244 — see
+   the action-jump finding above). MPPI sits *between* default and tuned
+   MPC. Same Pareto saturation lesson the mpc_chomp thread taught: at this
+   regime, switching planner family does not break through a well-tuned
+   baseline.
+
+2. **The temperature knob *is* the value-add.** Argmin MPC has no smooth
+   way to interpolate between "decisive" and "averaging" behavior —
+   `w_smooth` only penalises the *jump* between consecutive chosen
+   actions, not the *concentration* of the selection itself. At
+   temperature=10 MPPI achieves the smoothest control trajectory of any
+   planner in the suite (|Δcmd| 0.22, **-31 % vs default MPC**) at the
+   cost of a 10 pp success drop and 71 % speed loss. This Pareto
+   position isn't reachable from MPC's argmin family — the framework
+   gains a continuous knob it didn't have before.
+
+**Methodological miss-and-recovery (recorded for honesty).** My first
+attempt set the default temperature to 10.0 by eyeballing "middle of
+{0.1, 100}". The sweep revealed 10.0 sits in the speed-collapse zone
+(only 86.7 % success because the chosen action averages toward the
+n_samples set's mean, which has small magnitude). Default is now 1.0,
+identified by the success cliff in the sweep. The right way to pick a
+default is to *measure where the success cliff is*, not to eyeball it
+from cost magnitudes — same lesson as the Pareto-config retrofit.
 
 ## MPC + CHOMP smoothing: layering on a saturated planner is a wash
 
