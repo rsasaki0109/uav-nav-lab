@@ -113,6 +113,11 @@ def _run_episode(
         cmd = _follow_plan(plan, observation, planner.max_speed)
         next_state, info = sim.step(cmd)
 
+        # `sim_extra` carries any side-channel data the sim backend wants
+        # to surface (e.g. AirSim LiDAR point clouds). It comes from
+        # `next_state`, i.e. the post-step reading — half a step ahead of
+        # `true_pos` which is the pre-step position the planner saw.
+        # Recorder summarizes it (point counts, etc.) into the step row.
         rec.log_step(
             t=t,
             true_pos=state.position,
@@ -120,6 +125,7 @@ def _run_episode(
             observed_pos=observation,
             cmd=cmd,
             info={"collision": info.collision, "goal_reached": info.goal_reached},
+            sim_extra=dict(next_state.extra) if next_state.extra else None,
         )
 
         state = next_state
