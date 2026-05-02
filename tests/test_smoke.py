@@ -214,6 +214,111 @@ def test_airsim_bridge_step_round_trips_enu_via_mock_client() -> None:
     assert info.collision is False
 
 
+def test_airsim_lidar_to_pointcloud_occupancy_to_planner_pipeline_via_mocks() -> None:
+    """Guard rail for the AirSim-LiDAR perception pipeline (PRs #4 / #5 / #6).
+
+    Drives the inner experiment loop with a mock AirSim client + the real
+    AirSimBridge + the real pointcloud_occupancy sensor + a spy planner.
+    Verifies the per-step LiDAR returns flow:
+      AirSim mock → bridge.step → state.extra → recorder JSON summary
+      AirSim mock → bridge.step → state.extra → sensor.observe_map →
+        perceived_map the spy planner sees
+    Each layer is unit-tested separately; this test catches regressions
+    where the layers stop composing."""
+    from types import SimpleNamespace
+
+    from uav_nav_lab.planner.base import Plan
+    from uav_nav_lab.runner.experiment import _run_episode
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+    from uav_nav_lab.sensor import SENSOR_REGISTRY
+    from uav_nav_lab.sim.airsim_bridge import AirSimBridge
+
+    grid_cls = SCENARIO_REGISTRY.get("grid_world")
+    sc = grid_cls.from_config(
+        {"size": [10, 10], "start": [1.0, 1.0], "goal": [9.0, 9.0],
+         "obstacles": {"type": "none"}, "resolution": 1.0}
+    )
+
+    class FakeKin:
+        # Drone parks at NED (1, 1, 0) → ENU (1, 1, 0) every step. The
+        # static position keeps the lidar hits landing on the same cells
+        # each iteration so the assertions stay simple.
+        class _V:
+            x_val = 1.0
+            y_val = 1.0
+            z_val = 0.0
+        position = _V()
+        linear_velocity = _V()
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.lidar_calls: list[str] = []
+
+        def confirmConnection(self): pass
+        def enableApiControl(self, _o, _v): pass
+        def armDisarm(self, _o, _v): pass
+        def reset(self): pass
+        def simSetVehiclePose(self, *_a, **_k): pass
+        def simPause(self, _o): pass
+        def simContinueForTime(self, _dt): pass
+
+        def moveByVelocityAsync(self, *_a, **_k):
+            class _F:
+                def join(self): pass
+            return _F()
+
+        def getMultirotorState(self, vehicle_name=None):  # noqa: ARG002
+            return SimpleNamespace(kinematics_estimated=FakeKin())
+
+        def simGetCollisionInfo(self, vehicle_name=None):  # noqa: ARG002
+            return SimpleNamespace(has_collided=False)
+
+        def getLidarData(self, name, vehicle_name=None):  # noqa: ARG002
+            self.lidar_calls.append(name)
+            # NED (1, 0, 0), (0, 1, 0) → ENU (0, 1, 0), (1, 0, 0).
+            # Drone at world (1, 1) → world cells [1, 2] and [2, 1].
+            return SimpleNamespace(point_cloud=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0])
+
+    fake = FakeClient()
+    bridge = AirSimBridge(dt=0.05, scenario=sc, client=fake, lidars=["L1"])
+
+    pc_sensor_cls = SENSOR_REGISTRY.get("pointcloud_occupancy")
+    sensor = pc_sensor_cls.from_config({"resolution": 1.0, "memory": True})
+
+    captured = {"perceived_map": None, "calls": 0}
+
+    class SpyPlanner:
+        max_speed = 1.0
+
+        def reset(self) -> None: pass
+
+        def plan(self, observation, goal, perceived_map, dynamic_obstacles=None):  # noqa: ARG002
+            captured["perceived_map"] = np.asarray(perceived_map).copy()
+            captured["calls"] += 1
+            wpts = np.array([observation, goal[: observation.shape[0]]])
+            return Plan(waypoints=wpts, meta={"status": "ok"})
+
+    rec = _run_episode(
+        sim=bridge, planner=SpyPlanner(), sensor=sensor,
+        seed=0, replan_period=0.05, max_steps=3, episode_index=0,
+    )
+
+    # Lidar polled at every bridge.step (3 steps).
+    assert fake.lidar_calls == ["L1", "L1", "L1"]
+    # Recorder surfaced the per-step lidar count summary on every row.
+    assert len(rec.steps) == 3
+    assert all(s["lidar_points"] == {"L1": 2} for s in rec.steps)
+    # Spy planner saw an occupancy grid with the lidar-derived hits.
+    pm = captured["perceived_map"]
+    assert pm is not None
+    assert pm.shape == (10, 10)
+    assert pm[1, 2] and pm[2, 1]
+    assert pm.sum() == 2
+    # Replan ran each step (replan_period == dt), so the planner saw the
+    # accumulated map every time, not a stale snapshot.
+    assert captured["calls"] == 3
+
+
 def test_pointcloud_occupancy_marks_world_cells_from_local_points() -> None:
     """Drone at world (5, 5); lidar reports local points (1, 0, 0) and
     (-1, 1, 0) → world (6, 5) and (4, 6) → cells [6][5] and [4][6]
