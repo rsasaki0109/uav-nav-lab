@@ -919,8 +919,13 @@ def test_airsim_bridge_polls_depth_cameras_and_stashes_float_depth_via_mock_clie
     )
 
     class _ImgType:
-        Scene = 0; DepthVis = 3; DepthPerspective = 2; DepthPlanar = 1
-        Segmentation = 5; SurfaceNormals = 6; Infrared = 7
+        Scene = 0
+        DepthVis = 3
+        DepthPerspective = 2
+        DepthPlanar = 1
+        Segmentation = 5
+        SurfaceNormals = 6
+        Infrared = 7
     class _ImgReq:
         def __init__(self, camera_name, image_type, pixels_as_float, compress):  # noqa: ARG002
             self.camera_name = camera_name
@@ -943,8 +948,12 @@ def test_airsim_bridge_polls_depth_cameras_and_stashes_float_depth_via_mock_clie
         captured: list[list[Any]] = []  # noqa: F821
 
         class FakeKin:
-            class _V: x_val = 0.0; y_val = 0.0; z_val = 0.0
-            position = _V(); linear_velocity = _V()
+            class _V:
+                x_val = 0.0
+                y_val = 0.0
+                z_val = 0.0
+            position = _V()
+            linear_velocity = _V()
 
         class FakeClient:
             def confirmConnection(self): pass
