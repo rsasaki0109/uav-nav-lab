@@ -1,0 +1,80 @@
+# 3D multi-drone N=4 with 4× the static obstacles (120 vs 30 baseline).
+# Same world / same crossing pattern as exp_multi_drone_3d_4.yaml.
+# Goal: probe whether shrinking the per-drone free volume by packing the
+# voxel_world with obstacles brings back the coordination Δ that the
+# baseline 3D run (PR #39) found erased by escape volume.
+#
+# Result (n=30):
+#   per-drone success: 65.8 % [57.0, 73.7]
+#   joint success:     26.7 % [14.2, 44.4]
+#   indep `per^4`:     18.7 %
+#   Δ over indep:      +8.0 pp   (vs -1.0 pp at 30 obstacles)
+#
+# Confirms the mechanism: filling the air column with obstacles
+# eliminates the independent-z-detour the baseline relied on, so peer
+# prediction starts mattering again. See docs/findings.md "3D density
+# ablation: bring escape volume back to non-trivial — Δ comes back too".
+#
+# Reproduce:
+#   uav-nav run examples/exp_multi_drone_3d_4_dense.yaml
+#   uav-nav eval results/multi_drone_3d_4_dense
+
+name: multi_drone_3d_4_dense
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: multi_drone_voxel
+  size: [40, 40, 12]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 120                 # 4× the 30-obstacle baseline
+    seed: 7
+  drones:
+    - name: east
+      start: [3.0, 20.0, 6.0]
+      goal:  [37.0, 20.0, 6.0]
+      radius: 0.4
+    - name: west
+      start: [37.0, 20.0, 6.0]
+      goal:  [3.0, 20.0, 6.0]
+      radius: 0.4
+    - name: north
+      start: [20.0, 3.0, 6.0]
+      goal:  [20.0, 37.0, 6.0]
+      radius: 0.4
+    - name: south
+      start: [20.0, 37.0, 6.0]
+      goal:  [20.0, 3.0, 6.0]
+      radius: 0.4
+
+simulator:
+  type: dummy_3d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: mpc
+  max_speed: 8.0
+  replan_period: 0.2
+  horizon: 40
+  dt_plan: 0.05
+  n_samples: 8
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  safety_margin: 0.5
+  use_prediction: true
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/multi_drone_3d_4_dense

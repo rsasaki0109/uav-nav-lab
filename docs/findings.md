@@ -18,6 +18,7 @@ Wilson 95 % intervals on rates, mean ± 1.96·SEM on continuous metrics.
 - [Pareto config materially rewrites prior conclusions](#pareto-config-materially-rewrites-prior-conclusions)
 - [Multi-drone N-scaling and peer-prediction coordination](#multi-drone-n-scaling-and-peer-prediction-coordination)
 - [3D escape volume erases the coordination Δ](#3d-escape-volume-erases-the-coordination-δ)
+- [3D density ablation: bring escape volume back to non-trivial — Δ comes back too](#3d-density-ablation-bring-escape-volume-back-to-non-trivial--δ-comes-back-too)
 - [Wind miscalibration: planner belief must match sim reality](#wind-miscalibration-planner-belief-must-match-sim-reality)
 - [The perception-latency cliff: a four-step research saga](#the-perception-latency-cliff-a-four-step-research-saga)
 - [MPC + CHOMP smoothing: layering on a saturated planner is a wash](#mpc--chomp-smoothing-layering-on-a-saturated-planner-is-a-wash)
@@ -270,6 +271,57 @@ Methodological close: re-validate the *value* of every layer in every
 new dimensionality. Coordination Δ in 2D does not predict Δ in 3D, and
 the headline number (joint succ %) hides the inversion of the
 load-bearing factor (escape volume vs. peer prediction).
+
+### 3D density ablation: bring escape volume back to non-trivial — Δ comes back too
+
+`examples/exp_multi_drone_3d_4_{dense,packed}.yaml` — same N=4 / same
+3D world / same Pareto MPC, only the static obstacle count changes.
+Probes whether the previous finding's "3D Δ ≈ 0" really comes from the
+free-volume mechanism we attributed it to. n=30 episodes per cell.
+
+| obstacles | density (cells/world voxel) | per-drone | joint | indep `per^4` | Δ over indep |
+|---|---|---|---|---|---|
+| 30  (baseline) | 0.16 % | 95.8 % | 83.3 % | 84.3 % | -1.0 pp |
+| 120 (dense)    | 0.63 % | 65.8 % | 26.7 % | 18.7 % | **+8.0 pp** |
+| 240 (packed)   | 1.25 % | 46.7 % | 10.0 % | 4.8 %  | **+5.2 pp** |
+
+Pack the world with obstacles and the per-drone success collapses
+(96 → 66 → 47 %), but the **coordination Δ comes back from the dead**:
+−1 → +8 → +5 pp. The previous finding's mechanism — "z-axis lets each
+drone find an independent detour, so peer prediction has nothing to
+take credit for" — is exactly what gets undone when static obstacles
+fill the air column. Two drones can no longer trivially pass at
+different z; one of them yields, the other's MPC sees the yield via
+peer prediction, and the system as a whole degrades less than two
+independent drones would.
+
+The Δ peaks at intermediate density and falls again at the extreme:
+- **30 obstacles**: escape volume so large that drones never share
+  paths — coordination has nothing to do.
+- **120 obstacles**: paths overlap, but per-drone routes still exist
+  most of the time — peer prediction lifts the joint rate well above
+  the independence floor.
+- **240 obstacles**: per-drone success crashes to 47 % from
+  obstacle-only collisions; even perfect coordination cannot recover
+  what the planner is already losing solo.
+
+Universal pattern (with the 2D density ablation, N=8 60×60 vs 100×100):
+
+> **Coordination Δ is non-monotonic in free volume per agent.**
+> Both endpoints — *sparse* (independent routes available) and
+> *saturated* (per-agent failure dominates) — drive Δ toward zero.
+> Maximum Δ lives in the middle, where peers actually have to
+> negotiate but the planner is still capable of executing the
+> negotiated solution. The 2D N=8 100×100 case (Δ +25.7 pp) and the
+> 3D N=4 120-obstacle case (Δ +8.0 pp) are *the same regime in
+> different parameter spaces*: world-side and obstacle-side ways of
+> arriving at "intermediate per-agent free volume".
+
+Engineering takeaway: when deciding whether peer prediction is worth
+the implementation cost, the right diagnostic is not "how many drones"
+or "what dimensionality", it is **"how much free volume per drone
+remains after static and self-imposed constraints"**. The middle is
+where the layer earns its keep.
 
 ## Wind miscalibration: planner belief must match sim reality
 
