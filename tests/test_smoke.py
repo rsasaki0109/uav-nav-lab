@@ -606,7 +606,9 @@ def test_airsim_camera_to_video_end_to_end_via_mocks(tmp_path: Path) -> None:
         # bridge→recorder→writer without becoming flaky on fast machines.
         class FakeKin:
             class _V:
-                x_val = 0.0; y_val = 0.0; z_val = 0.0
+                x_val = 0.0
+                y_val = 0.0
+                z_val = 0.0
             position = _V()
             linear_velocity = _V()
 
