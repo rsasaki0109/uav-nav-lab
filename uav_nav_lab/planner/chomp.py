@@ -46,6 +46,7 @@ import numpy as np
 
 from ._grid import inflate_obstacles
 from .base import PLANNER_REGISTRY, Plan, Planner
+from .rrt import RRTPlanner
 
 
 def _distance_field(
@@ -81,6 +82,30 @@ def _smoothness_hessian(n: int) -> np.ndarray:
         a[i, i + 1] = -2.0
         a[i, i + 2] = 1.0
     return a.T @ a
+
+
+def _resample_polyline(wps: np.ndarray, n: int) -> np.ndarray:
+    """Resample a polyline to exactly `n` points along its arc length.
+
+    The RRT/RRT* planners return variable-length, unevenly-spaced
+    waypoint sequences. CHOMP needs a fixed n with reasonably uniform
+    spacing so the smoothness Hessian's per-waypoint scale is consistent.
+    Linear arc-length parameterisation does both at once.
+
+    Returns shape (n, ndim). For n ≤ 1 or single-point polylines the
+    output is just the (repeated) start point."""
+    wps = np.asarray(wps, dtype=float)
+    if wps.shape[0] <= 1 or n <= 1:
+        return np.repeat(wps[:1], max(n, 1), axis=0)
+    seg = np.linalg.norm(np.diff(wps, axis=0), axis=1)
+    cum = np.concatenate([[0.0], np.cumsum(seg)])
+    if cum[-1] < 1e-12:
+        return np.repeat(wps[:1], n, axis=0)
+    targets = np.linspace(0.0, cum[-1], n)
+    out = np.empty((n, wps.shape[1]), dtype=float)
+    for k in range(wps.shape[1]):
+        out[:, k] = np.interp(targets, cum, wps[:, k])
+    return out
 
 
 def _obstacle_cost_and_grad(
@@ -142,6 +167,12 @@ class ChompPlanner(Planner):
         resolution: float = 1.0,
         inflate: int = 0,
         goal_tolerance: float = 1.5,
+        init: str = "straight",
+        rrt_max_samples: int = 1000,
+        rrt_step_size: float = 2.0,
+        rrt_goal_tolerance: float = 1.5,
+        rrt_goal_bias: float = 0.1,
+        rrt_seed: int = 0,
     ) -> None:
         self.max_speed = float(max_speed)
         self.replan_period = float(replan_period)
@@ -155,6 +186,26 @@ class ChompPlanner(Planner):
         self.resolution = float(resolution)
         self.inflate = int(inflate)
         self.goal_tolerance = float(goal_tolerance)
+        # Init strategy. "straight" (default): linear interpolation from
+        # observation to goal. "rrt": run an RRT sampling planner first,
+        # resample its variable-length path to n_waypoints, then smooth.
+        # RRT init lifts CHOMP out of the local-minimum trap on cluttered
+        # scenarios at the cost of one RRT replan worth of compute.
+        if init not in ("straight", "rrt"):
+            raise ValueError(f"init must be 'straight' or 'rrt'; got {init!r}")
+        self.init = init
+        self._rrt: RRTPlanner | None = None
+        if init == "rrt":
+            self._rrt = RRTPlanner(
+                max_speed=self.max_speed,
+                max_samples=int(rrt_max_samples),
+                step_size=float(rrt_step_size),
+                goal_tolerance=float(rrt_goal_tolerance),
+                goal_bias=float(rrt_goal_bias),
+                resolution=self.resolution,
+                inflate=self.inflate,
+                seed=int(rrt_seed),
+            )
         # Hessians only depend on n_waypoints — cache across replans. The
         # M⁻¹ block is the interior-only inverse used to precondition each
         # step (avoiding the divergence that plain GD on `K` exhibits for
@@ -178,7 +229,18 @@ class ChompPlanner(Planner):
             resolution=float(cfg.get("resolution", 1.0)),
             inflate=int(cfg.get("inflate", 0)),
             goal_tolerance=float(cfg.get("goal_tolerance", 1.5)),
+            init=str(cfg.get("init", "straight")),
+            rrt_max_samples=int(cfg.get("rrt_max_samples", 1000)),
+            rrt_step_size=float(cfg.get("rrt_step_size", 2.0)),
+            rrt_goal_tolerance=float(cfg.get("rrt_goal_tolerance", 1.5)),
+            rrt_goal_bias=float(cfg.get("rrt_goal_bias", 0.1)),
+            rrt_seed=int(cfg.get("rrt_seed", 0)),
         )
+
+    def reset(self) -> None:
+        # Forward to the inner RRT (re-seeds its sample stream per episode).
+        if self._rrt is not None:
+            self._rrt.reset()
 
     def plan(
         self,
@@ -207,9 +269,23 @@ class ChompPlanner(Planner):
             self._K_int_inv = np.linalg.inv(k_int + 1e-6 * np.eye(n - 2))
             self._K_endpts = self._K[1:-1][:, [0, -1]]            # (n-2, 2)
 
-        # Straight-line init from start to goal.
-        ts = np.linspace(0.0, 1.0, n)
-        x = start[None, :] + (gl - start)[None, :] * ts[:, None]   # (n, ndim)
+        # Init: straight-line by default; optional RRT path resampled to n
+        # waypoints. RRT init is what lets CHOMP escape local minima the
+        # straight-line init falls into (cluttered scenarios, wraparound
+        # detours). On RRT failure (no path within max_samples), fall back
+        # to straight-line so the optimiser still produces something.
+        init_used = self.init
+        if self._rrt is not None:
+            rrt_plan = self._rrt.plan(start, gl, occ_raw)
+            if rrt_plan.meta.get("status") == "ok" and rrt_plan.waypoints.shape[0] >= 2:
+                x = _resample_polyline(rrt_plan.waypoints, n)
+            else:
+                init_used = "rrt_fallback_straight"
+                ts = np.linspace(0.0, 1.0, n)
+                x = start[None, :] + (gl - start)[None, :] * ts[:, None]
+        else:
+            ts = np.linspace(0.0, 1.0, n)
+            x = start[None, :] + (gl - start)[None, :] * ts[:, None]   # (n, ndim)
 
         # Cap at 2×ε; anything farther contributes zero gradient anyway.
         dist = _distance_field(occ, self.resolution, cap=2.0 * self.epsilon)
@@ -253,5 +329,6 @@ class ChompPlanner(Planner):
                 "status": status,
                 "n_waypoints": n,
                 "n_iters": self.n_iters,
+                "init": init_used,
             },
         )
