@@ -1,0 +1,76 @@
+# 3D CHOMP head-to-head — same scenario as exp_3d_predictive.yaml
+# (40×40×12 voxel_world + 60 random obstacles + 3 bouncing dynamic
+# obstacles), straight-line init.
+#
+# Measured (40×40×12 voxel_world, n=30, Wilson 95 % CI):
+#   chomp 3D       53.3 %  [36.1, 69.8]   plan_dt 296.21 / 310.84 ms   ← this file
+#   chomp+rrt 3D   73.3 %  [55.6, 85.8]   plan_dt 292.74 / 304.88 ms
+#   rrt 3D         80.0 %  [62.7, 90.5]   plan_dt  13.61 /  24.03 ms
+#   mpc 3D         83.3 %  [66.4, 92.7]   plan_dt  80.19 / 112.34 ms
+#
+# 3D CHOMP-straight lands at *the same 53.3 %* as 2D CHOMP — the local-
+# minimum trap still bites, and the 3D escape volume that softens many
+# failure modes does not help here because the failures are dynamic
+# obstacles passing through the (smooth, locally-optimal) planned path
+# during a replan window, not static "init went the wrong way" traps.
+# Path length is shorter than 2D (37.2 m vs 47.6 m) — the smoothness
+# term keeps the trajectory tight in 3D too.
+#
+# Reproduce: uav-nav run examples/exp_3d_compare_chomp.yaml
+#            uav-nav eval results/cmp_3d_chomp
+name: cmp_3d_chomp
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: voxel_world
+  size: [40, 40, 12]
+  start: [2.0, 2.0, 6.0]
+  goal: [37.0, 37.0, 6.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 60
+    seed: 7
+  dynamic_obstacles:
+    - start: [20.0, 8.0, 6.0]
+      velocity: [0.0, 5.0, 0.5]
+      reflect: true
+      radius: 0.8
+    - start: [8.0, 25.0, 5.0]
+      velocity: [4.0, 0.0, -0.4]
+      reflect: true
+      radius: 0.8
+    - start: [28.0, 20.0, 7.0]
+      velocity: [-3.0, 2.0, 0.3]
+      reflect: true
+      radius: 0.8
+
+simulator:
+  type: dummy_3d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: chomp
+  max_speed: 8.0
+  replan_period: 0.5
+  n_waypoints: 30
+  n_iters: 100
+  learning_rate: 0.05
+  max_step_norm: 1.0
+  w_smooth: 1.0
+  w_obs: 5.0
+  epsilon: 2.0
+  resolution: 1.0
+  inflate: 1
+  goal_tolerance: 1.5
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/cmp_3d_chomp

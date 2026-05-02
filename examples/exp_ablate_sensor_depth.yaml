@@ -1,0 +1,69 @@
+# Sensor ablation B — depth_image_occupancy fed by synthetic forward
+# pinhole depth camera. Pairs with exp_ablate_sensor_pointcloud.yaml.
+#
+# Camera spec: 90° FOV, 64×48 pixels (the ratio matches a typical
+# downward / forward depth camera; the absolute resolution is small
+# enough to keep per-replan cost low). Stride 1 keeps every pixel —
+# the question is "does the narrower view cost success?".
+#
+# Measured (50×50, n=30, A* planner, Wilson 95 % CI):
+#   pointcloud (omni 8 m)   93.3 %  [78.7, 98.2]   plan_dt 1.36 ms
+#   depth (forward 90° FOV) 63.3 %  [45.5, 78.1]   plan_dt 1.45 ms   ← this file
+# Forward-only loses 30 pp vs omni at essentially the same compute.
+# Engineering takeaway: in a scenario where obstacles can approach
+# from any direction, you cannot make up for missing FOV with planner
+# smarts — the planner can only react to what the sensor surfaced.
+# Pair multiple cameras (e.g. front + back) or use an omni-LiDAR to
+# close the gap.
+#
+# Reproduce: uav-nav run examples/exp_ablate_sensor_depth.yaml
+#            uav-nav eval results/abl_sensor_depth
+name: abl_sensor_depth
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: grid_world
+  size: [50, 50]
+  start: [2.0, 2.0]
+  goal: [45.0, 45.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 25
+    seed: 7
+
+simulator:
+  type: dummy_2d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+  synthetic_perception:
+    # Surfaces a {depth, intrinsics, R_cam_to_body} payload at
+    # state.extra["depth_images"]["front"]. Forward camera looking
+    # along world +x.
+    depth:
+      fov_deg: 90
+      width: 64
+      height: 48
+      max_depth: 8.0
+
+planner:
+  type: astar
+  max_speed: 8.0
+  replan_period: 0.5
+  resolution: 1.0
+  inflate: 1
+
+sensor:
+  type: depth_image_occupancy
+  resolution: 1.0
+  memory: true
+  inflate: 0
+  stride: 1
+  max_depth: 8.0
+
+output:
+  dir: results/abl_sensor_depth

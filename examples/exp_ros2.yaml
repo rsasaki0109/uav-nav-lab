@@ -39,6 +39,17 @@ simulator:
   dt: 0.05
   max_steps: 1500
   goal_radius: 1.5
+  # Sim-time mode — uncomment when running against a sim that publishes
+  # /clock (PX4-SITL, Gazebo with --lockstep, ros2_control sim plugins).
+  # The bridge then advances `state.t` by waiting for /clock to tick by
+  # `dt` rather than using wall-clock, so a sim fast-forwarded to 8×
+  # speeds the experiment up by the same factor. `sim_time_wall_timeout`
+  # is the safety upper bound (wall-clock seconds) on each wait — guards
+  # against deadlock when the sim pauses or crashes.
+  # use_sim_time: true
+  # clock_topic: /clock
+  # sim_time_wall_timeout: 5.0
+  #
   # Optional sensor topics — uncomment to subscribe.
   #
   # PointCloud2 topics. Each step's latest cloud is decoded to (N, 3)

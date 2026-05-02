@@ -14,12 +14,14 @@ every example YAML carries its own validated finding.**
 
 <table>
 <tr>
-<td><img src="docs/images/demo_mpc.gif" alt="2D Pareto-MPC routing through three bouncing dynamic obstacles" width="380"></td>
-<td><img src="docs/images/demo_3d.gif" alt="3D Pareto-MPC episode on a 40×40×12 voxel world with three bouncing dynamic obstacles" width="380"></td>
+<td><img src="docs/images/demo_mpc.gif" alt="2D Pareto-MPC routing through three bouncing dynamic obstacles" width="280"></td>
+<td><img src="docs/images/demo_3d.gif" alt="3D Pareto-MPC episode on a 40×40×12 voxel world with three bouncing dynamic obstacles" width="280"></td>
+<td><img src="docs/images/demo_multi_drone.gif" alt="4-drone cross-crossing scenario: east/west/north/south pairs all reach opposite goals via constant-velocity peer prediction" width="280"></td>
 </tr>
 <tr>
 <td align="center"><i>2D — Pareto-MPC (n=16, h=20) through three bouncing obstacles.</i></td>
 <td align="center"><i>3D — same planner family on a 40×40×12 voxel world.</i></td>
+<td align="center"><i>Multi-drone — 4 drones cross-crossing via CV peer prediction.</i></td>
 </tr>
 </table>
 
@@ -253,7 +255,7 @@ takeaways) live in [`docs/findings.md`](docs/findings.md):
 
 - **v0.1.0** released; GitHub Actions CI on Python 3.10 / 3.11 / 3.12
   + a CLI smoke job.
-- **5 sensor backends** (`perfect`, `delayed`, `kalman_delayed`, `lidar`, `pointcloud_occupancy`),
+- **6 sensor backends** (`perfect`, `delayed`, `kalman_delayed`, `lidar`, `pointcloud_occupancy`, `depth_image_occupancy`),
   **3 predictor backends** (`constant_velocity`, `noisy_velocity`,
   `kalman_velocity`), **6 planners** (`astar`, `straight`, `mpc`, `rrt`,
   `rrt_star`, `chomp`), **3 scenarios** (`grid_world`, `voxel_world`,
@@ -279,7 +281,13 @@ External backends:
   Optional `cameras: [{name, image_type}, …]` polls `simGetImages()`
   and stashes compressed PNG bytes at `state.extra["camera_images"][name]`;
   set `output.save_camera_frames: true` and run `uav-nav video <run_dir>`
-  to ffmpeg them into per-episode / per-camera MP4 demo reels.
+  to ffmpeg them into per-episode / per-camera MP4 demo reels. Optional
+  `depths: [{name, fov_deg, width, height}, …]` polls the same call
+  with `pixels_as_float=True` and surfaces a `{depth, intrinsics}`
+  payload at `state.extra["depth_images"][name]` — pair with
+  `depth_image_occupancy` to project pixels into the planner's
+  occupancy grid (the depth-camera analogue of the
+  `pointcloud_occupancy` LiDAR path).
 - **ROS 2** (`uav_nav_lab/sim/ros2_bridge.py`) is wired end-to-end —
   publishes `geometry_msgs/Twist` on `/cmd_vel`, subscribes to
   `nav_msgs/Odometry` on `/odom` (and optional `std_msgs/Bool` on
@@ -295,7 +303,12 @@ External backends:
   backends without a code change. Optional `cameras: [topic, …]`
   subscribes to `sensor_msgs/Image` and PNG-encodes each frame to
   `state.extra["camera_images"][topic]`, feeding the same
-  `output.save_camera_frames` + `uav-nav video` pipeline.
+  `output.save_camera_frames` + `uav-nav video` pipeline. Set
+  `use_sim_time: true` (with optional `clock_topic` / `sim_time_wall_timeout`)
+  to anchor `state.t` on `/clock` instead of wall-clock — PX4-SITL
+  fast-forward and Gazebo `--lockstep` then speed up the experiment by
+  the same factor as the sim, with the wall-clock timeout protecting
+  the runner from a paused or crashed sim.
 
 ## 🗺️ Roadmap
 

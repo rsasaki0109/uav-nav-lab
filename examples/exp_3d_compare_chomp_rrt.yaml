@@ -1,0 +1,93 @@
+# 3D CHOMP+RRT-init head-to-head — same scenario as
+# exp_3d_compare_chomp.yaml. Initialises CHOMP from an RRT path so the
+# smoother starts from a collision-free warm start and only has to
+# locally optimise. The 2D version of this stack lifted CHOMP from
+# 53.3 % → 90.0 % (+37 pp), beating plain RRT and second only to MPC.
+#
+# Measured (40×40×12 voxel_world, n=30, Wilson 95 % CI):
+#   chomp 3D       53.3 %  [36.1, 69.8]   plan_dt 296.21 / 310.84 ms
+#   chomp+rrt 3D   73.3 %  [55.6, 85.8]   plan_dt 292.74 / 304.88 ms   ← this file
+#   rrt 3D         80.0 %  [62.7, 90.5]   plan_dt  13.61 /  24.03 ms
+#   mpc 3D         83.3 %  [66.4, 92.7]   plan_dt  80.19 / 112.34 ms
+#
+# Honest counter-result vs 2D: layering RRT init under CHOMP DOES still
+# lift success vs straight init in 3D (+20 pp, same direction as the
+# 2D +37 pp), so the *technique* transfers — but the **rank flips**.
+# In 2D, CHOMP+RRT (90 %) beat plain RRT (73 %) by +17 pp at *cheaper*
+# compute; in 3D, plain RRT (80 %) beats CHOMP+RRT (73 %) by +6.7 pp
+# at **22× cheaper** compute (14 ms vs 293 ms / replan). The smoothing
+# pass that helped in 2D actually pulls 3D waypoints back into
+# obstacle proximity along edges that RRT had safely routed around.
+# At the same time, the per-replan compute climbs past MPC's by 3.7×
+# because the brute-force distance field goes O(M·K) over the much
+# larger 3D voxel grid. Pareto saturation in both axes.
+#
+# Engineering takeaway: layered planning is not a free win across
+# dimensionalities. Re-validate every layered stack in the target
+# scenario before defaulting to it — same lesson the rest of the
+# framework's findings teach.
+#
+# Reproduce: uav-nav run examples/exp_3d_compare_chomp_rrt.yaml
+#            uav-nav eval results/cmp_3d_chomp_rrt
+name: cmp_3d_chomp_rrt
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: voxel_world
+  size: [40, 40, 12]
+  start: [2.0, 2.0, 6.0]
+  goal: [37.0, 37.0, 6.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 60
+    seed: 7
+  dynamic_obstacles:
+    - start: [20.0, 8.0, 6.0]
+      velocity: [0.0, 5.0, 0.5]
+      reflect: true
+      radius: 0.8
+    - start: [8.0, 25.0, 5.0]
+      velocity: [4.0, 0.0, -0.4]
+      reflect: true
+      radius: 0.8
+    - start: [28.0, 20.0, 7.0]
+      velocity: [-3.0, 2.0, 0.3]
+      reflect: true
+      radius: 0.8
+
+simulator:
+  type: dummy_3d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: chomp
+  max_speed: 8.0
+  replan_period: 0.5
+  n_waypoints: 30
+  n_iters: 100
+  learning_rate: 0.05
+  max_step_norm: 1.0
+  w_smooth: 1.0
+  w_obs: 5.0
+  epsilon: 2.0
+  resolution: 1.0
+  inflate: 1
+  goal_tolerance: 1.5
+  init: rrt
+  rrt_max_samples: 1500
+  rrt_step_size: 2.0
+  rrt_goal_tolerance: 1.5
+  rrt_goal_bias: 0.1
+  rrt_seed: 42
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/cmp_3d_chomp_rrt
