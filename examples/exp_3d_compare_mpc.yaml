@@ -1,0 +1,67 @@
+# 3D MPC head-to-head — same scenario as exp_3d_compare_chomp{,_rrt}.yaml
+# (40×40×12 voxel_world + 60 random obstacles + 3 bouncing dynamic
+# obstacles). Uses the 3D Pareto-optimal config from
+# exp_3d_predictive.yaml (n_samples=8, horizon=20) — recall the 2D
+# n=16/h=20 sweet spot does NOT transfer.
+#
+# Provides the n=30 baseline the CHOMP runs are compared against.
+#
+# Reproduce: uav-nav run examples/exp_3d_compare_mpc.yaml
+#            uav-nav eval results/cmp_3d_mpc
+name: cmp_3d_mpc
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: voxel_world
+  size: [40, 40, 12]
+  start: [2.0, 2.0, 6.0]
+  goal: [37.0, 37.0, 6.0]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 60
+    seed: 7
+  dynamic_obstacles:
+    - start: [20.0, 8.0, 6.0]
+      velocity: [0.0, 5.0, 0.5]
+      reflect: true
+      radius: 0.8
+    - start: [8.0, 25.0, 5.0]
+      velocity: [4.0, 0.0, -0.4]
+      reflect: true
+      radius: 0.8
+    - start: [28.0, 20.0, 7.0]
+      velocity: [-3.0, 2.0, 0.3]
+      reflect: true
+      radius: 0.8
+
+simulator:
+  type: dummy_3d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: mpc
+  max_speed: 8.0
+  replan_period: 0.2
+  horizon: 20
+  dt_plan: 0.05
+  n_samples: 8
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  safety_margin: 0.5
+  use_prediction: true
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/cmp_3d_mpc

@@ -230,6 +230,32 @@ saga uncovered, just on the search side.
 > Reproduce: `uav-nav run examples/exp_compare_{straight,astar,rrt,rrt_star,chomp,chomp_rrt,mpc}.yaml`,
 > then `uav-nav compare results/cmp_straight results/cmp_astar results/cmp_rrt_star results/cmp_chomp results/cmp_rrt results/cmp_chomp_rrt results/cmp_mpc`.
 
+### 🧊 The 2D layering finding *does not* transfer to 3D
+
+Same head-to-head moved to a 40 × 40 × 12 voxel world (`exp_3d_compare_*.yaml`,
+n=30 episodes per planner):
+
+| planner | 2D success | 2D plan_dt | 3D success | 3D plan_dt |
+|---|---|---|---|---|
+| chomp (straight) | 53.3 % | 21 ms | **53.3 %** | 296 ms ⚠ |
+| rrt | 73.3 % | 30 ms | 80.0 % | **14 ms** |
+| chomp+rrt | **90.0 %** | 32 ms | 73.3 % | 293 ms ⚠ |
+| mpc | 100.0 % | 52 ms | 83.3 % | 80 ms |
+
+**The technique transfers (CHOMP+RRT still beats CHOMP-straight by +20 pp
+in 3D, same direction as the 2D +37 pp), but the rank flips.** In 2D,
+CHOMP+RRT beat plain RRT by +17 pp at *cheaper* compute; in 3D, plain
+RRT beats CHOMP+RRT by +6.7 pp at **22× cheaper** compute. Two effects
+stack up: (a) the larger 3D escape volume gives plain RRT enough room
+to find collision-free paths without smoothing help, and (b) CHOMP's
+brute-force distance field goes O(M·K) over the much larger voxel
+grid, blowing per-replan compute from 32 ms to 293 ms. Same dimensional
+re-validation lesson the [3D Pareto study](docs/findings.md) taught
+on MPC's `n_samples` preference: layered planning is not a free win
+across dimensionalities, even when the per-layer wins do transfer.
+
+> Reproduce: `uav-nav run examples/exp_3d_compare_{chomp,rrt,chomp_rrt,mpc}.yaml`.
+
 ### More studies — see [docs/findings.md](docs/findings.md)
 
 The full long-form write-ups (tables, ablation reasoning, methodological
