@@ -55,6 +55,17 @@ simulator:
   # cameras:
   #   - {name: front_center, image_type: scene}
   #   - {name: front_center, image_type: depth_vis}
+  #
+  # depths: list of {name, image_type, fov_deg, width, height}. The bridge
+  # calls simGetImages() with pixels_as_float=True and surfaces a raw
+  # float depth image + intrinsics at state.extra["depth_images"][name].
+  # image_type is one of depth_planar (default — true Z) or
+  # depth_perspective (slant range). Pair with the depth_image_occupancy
+  # sensor below to project pixels into the planner's occupancy grid:
+  #   sensor: { type: depth_image_occupancy, resolution: 1.0,
+  #             stride: 4, max_depth: 8.0 }
+  # depths:
+  #   - {name: front_center, image_type: depth_planar, fov_deg: 90.0, width: 256, height: 144}
 
 planner:
   type: mpc

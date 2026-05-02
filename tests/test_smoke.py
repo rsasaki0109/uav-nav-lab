@@ -794,6 +794,212 @@ def test_pointcloud_occupancy_inflate_dilates_each_hit() -> None:
     assert out.sum() == 5  # center + 4 neighbors, no diagonals
 
 
+def test_depth_image_occupancy_projects_pixel_to_correct_world_cell() -> None:
+    """Drone at world (5, 5), 2D occupancy. A single non-sky pixel at
+    column 40 row 24 with depth 3 m, intrinsics fx=fy=32, cx=32, cy=24:
+        camera frame: x = (40-32) * 3 / 32 = 0.75, y = 0, z = 3
+    With identity rotation that's body (0.75, 0, 3); projecting to 2D
+    occupancy (xy) with resolution 1.0 lands the hit at cell (5, 5)
+    (5 + 0.75 → floor → 5). All other cells stay free."""
+    from uav_nav_lab.sensor import SENSOR_REGISTRY
+
+    sensor = SENSOR_REGISTRY.get("depth_image_occupancy").from_config(
+        {"resolution": 1.0, "memory": True, "stride": 1, "max_depth": 10.0}
+    )
+    sensor.reset()
+    depth = np.full((48, 64), 100.0, dtype=np.float32)  # everything is sky
+    depth[24, 40] = 3.0
+    base = np.zeros((20, 20), dtype=bool)
+    out = sensor.observe_map(
+        t=0.0, true_position=np.array([5.0, 5.0]), true_obstacle_map=base,
+        sim_extra={"depth_images": {"front": {
+            "depth": depth,
+            "intrinsics": {"fx": 32.0, "fy": 32.0, "cx": 32.0, "cy": 24.0},
+        }}},
+    )
+    assert out.sum() == 1
+    assert out[5, 5]
+
+
+def test_depth_image_occupancy_drops_out_of_range_pixels() -> None:
+    """`max_depth: M` should drop pixels reporting d > M (sky / no-return).
+    With max_depth=5 m and a depth image of all 8 m, the resulting
+    occupancy must stay empty — no false positives from saturated pixels."""
+    from uav_nav_lab.sensor import SENSOR_REGISTRY
+
+    sensor = SENSOR_REGISTRY.get("depth_image_occupancy").from_config(
+        {"resolution": 1.0, "memory": True, "stride": 1, "max_depth": 5.0}
+    )
+    sensor.reset()
+    depth = np.full((10, 10), 8.0, dtype=np.float32)  # all beyond max_depth
+    base = np.zeros((20, 20), dtype=bool)
+    out = sensor.observe_map(
+        0.0, np.array([10.0, 10.0]), base,
+        sim_extra={"depth_images": {"front": {
+            "depth": depth,
+            "intrinsics": {"fx": 5.0, "fy": 5.0, "cx": 5.0, "cy": 5.0},
+        }}},
+    )
+    assert out.sum() == 0
+
+
+def test_depth_image_occupancy_handles_missing_or_malformed_payload() -> None:
+    """No sim_extra / no depth_images / missing intrinsics / wrong-shape
+    depth array should all return the (memory-accumulated, possibly
+    empty) grid without crashing — same forgiving behaviour as
+    pointcloud_occupancy."""
+    from uav_nav_lab.sensor import SENSOR_REGISTRY
+
+    sensor = SENSOR_REGISTRY.get("depth_image_occupancy").from_config(
+        {"resolution": 1.0, "memory": True}
+    )
+    sensor.reset()
+    base = np.zeros((10, 10), dtype=bool)
+    pos = np.array([5.0, 5.0])
+
+    assert sensor.observe_map(0.0, pos, base, sim_extra=None).sum() == 0
+    assert sensor.observe_map(0.0, pos, base, sim_extra={}).sum() == 0
+    assert sensor.observe_map(0.0, pos, base, sim_extra={"depth_images": {}}).sum() == 0
+    # Missing intrinsics → silently skip.
+    assert sensor.observe_map(
+        0.0, pos, base, sim_extra={"depth_images": {"f": {"depth": np.ones((4, 4), np.float32)}}}
+    ).sum() == 0
+    # 1D depth array → silently skip.
+    assert sensor.observe_map(
+        0.0, pos, base, sim_extra={"depth_images": {"f": {
+            "depth": np.ones(16, np.float32),
+            "intrinsics": {"fx": 4.0, "fy": 4.0, "cx": 2.0, "cy": 2.0},
+        }}},
+    ).sum() == 0
+
+
+def test_depth_image_occupancy_stride_subsamples_for_compute() -> None:
+    """`stride: 2` halves the pixel grid in each axis. A 4x4 depth image
+    with all pixels valid should mark *fewer* cells when stride=2 vs
+    stride=1 (cost-vs-coverage tradeoff)."""
+    from uav_nav_lab.sensor import SENSOR_REGISTRY
+
+    cls = SENSOR_REGISTRY.get("depth_image_occupancy")
+    base = np.zeros((30, 30), dtype=bool)
+    pos = np.array([15.0, 15.0])
+    # 16 unique depths so each pixel projects to a distinct (X, Y).
+    depth = np.linspace(1.0, 5.0, 16, dtype=np.float32).reshape(4, 4)
+    payload = {"f": {
+        "depth": depth,
+        "intrinsics": {"fx": 4.0, "fy": 4.0, "cx": 2.0, "cy": 2.0},
+    }}
+    s1 = cls.from_config({"resolution": 0.5, "memory": True, "stride": 1, "max_depth": 10.0})
+    s1.reset()
+    s2 = cls.from_config({"resolution": 0.5, "memory": True, "stride": 2, "max_depth": 10.0})
+    s2.reset()
+    n1 = int(s1.observe_map(0.0, pos, base, sim_extra={"depth_images": payload}).sum())
+    n2 = int(s2.observe_map(0.0, pos, base, sim_extra={"depth_images": payload}).sum())
+    assert n1 > 0
+    assert n2 > 0
+    assert n2 < n1  # subsampling marks fewer cells
+
+
+def test_airsim_bridge_polls_depth_cameras_and_stashes_float_depth_via_mock_client() -> None:
+    """When `depths: [{name, fov_deg, width, height}]` is configured,
+    AirSimBridge.step() should call client.simGetImages() with
+    pixels_as_float=True and stash {depth, intrinsics} at
+    state.extra["depth_images"][name]. Intrinsics derive from the
+    configured fov + image size."""
+    import sys
+    from types import ModuleType, SimpleNamespace
+
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+    from uav_nav_lab.sim.airsim_bridge import AirSimBridge
+
+    grid_cls = SCENARIO_REGISTRY.get("grid_world")
+    sc = grid_cls.from_config(
+        {"size": [10, 10], "start": [1.0, 1.0], "goal": [9.0, 9.0], "obstacles": {"type": "none"}}
+    )
+
+    class _ImgType:
+        Scene = 0; DepthVis = 3; DepthPerspective = 2; DepthPlanar = 1
+        Segmentation = 5; SurfaceNormals = 6; Infrared = 7
+    class _ImgReq:
+        def __init__(self, camera_name, image_type, pixels_as_float, compress):  # noqa: ARG002
+            self.camera_name = camera_name
+            self.image_type = image_type
+            self.pixels_as_float = pixels_as_float
+            self.compress = compress
+    class _Vec3:
+        def __init__(self, x, y, z): self.x_val, self.y_val, self.z_val = x, y, z
+    class _Pose:
+        def __init__(self, position, orientation): self.position, self.orientation = position, orientation
+    fake_airsim = ModuleType("airsim")
+    fake_airsim.ImageType = _ImgType
+    fake_airsim.ImageRequest = _ImgReq
+    fake_airsim.Vector3r = _Vec3
+    fake_airsim.Pose = _Pose
+    fake_airsim.to_quaternion = lambda *_a, **_k: object()
+    saved = sys.modules.get("airsim")
+    sys.modules["airsim"] = fake_airsim
+    try:
+        captured: list[list[Any]] = []  # noqa: F821
+
+        class FakeKin:
+            class _V: x_val = 0.0; y_val = 0.0; z_val = 0.0
+            position = _V(); linear_velocity = _V()
+
+        class FakeClient:
+            def confirmConnection(self): pass
+            def enableApiControl(self, _o, _v): pass
+            def armDisarm(self, _o, _v): pass
+            def reset(self): pass
+            def simSetVehiclePose(self, *_a, **_k): pass
+            def simPause(self, _o): pass
+            def simContinueForTime(self, _dt): pass
+            def moveByVelocityAsync(self, *_a, **_k):
+                class _F:
+                    def join(self): pass
+                return _F()
+            def getMultirotorState(self, vehicle_name=None):  # noqa: ARG002
+                return SimpleNamespace(kinematics_estimated=FakeKin())
+            def simGetCollisionInfo(self, vehicle_name=None):  # noqa: ARG002
+                return SimpleNamespace(has_collided=False)
+            def simGetImages(self, requests, vehicle_name=None):  # noqa: ARG002
+                captured.append(list(requests))
+                # Return one float-pixel response per request: 8x6 = 48 floats.
+                return [SimpleNamespace(image_data_float=[2.5] * (8 * 6))]
+
+        bridge = AirSimBridge(
+            dt=0.05, scenario=sc, client=FakeClient(),
+            depths=[{
+                "name": "fwd", "image_type": "depth_planar",
+                "fov_deg": 90.0, "width": 8, "height": 6,
+            }],
+        )
+        bridge.reset()
+        out_state, _ = bridge.step(np.array([0.0, 0.0]))
+
+        # The right ImageRequest was issued: depth_planar + float + uncompressed.
+        assert len(captured) == 1
+        req = captured[0][0]
+        assert req.camera_name == "fwd"
+        assert req.image_type == _ImgType.DepthPlanar
+        assert req.pixels_as_float is True
+        assert req.compress is False
+
+        # Payload landed correctly under state.extra["depth_images"][name].
+        depth_bag = out_state.extra["depth_images"]
+        payload = depth_bag["fwd"]
+        assert payload["depth"].shape == (6, 8)
+        assert float(payload["depth"][0, 0]) == pytest.approx(2.5)
+        # 90deg fov on 8 px wide → fx = 4 / tan(45) = 4. cx = 4, cy = 3.
+        assert payload["intrinsics"]["fx"] == pytest.approx(4.0)
+        assert payload["intrinsics"]["fy"] == pytest.approx(4.0)
+        assert payload["intrinsics"]["cx"] == pytest.approx(4.0)
+        assert payload["intrinsics"]["cy"] == pytest.approx(3.0)
+    finally:
+        if saved is None:
+            del sys.modules["airsim"]
+        else:
+            sys.modules["airsim"] = saved
+
+
 def test_recorder_summarizes_lidar_points_into_step_row() -> None:
     """When a sim backend populates state.extra['lidar_points'] with
     name-keyed (N, 3) arrays, EpisodeRecorder.log_step should surface
