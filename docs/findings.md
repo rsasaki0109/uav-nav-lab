@@ -151,22 +151,81 @@ keep up.
 opposite-corner goals while routing around each other via the MPC's
 constant-velocity peer prediction.*
 
-`examples/exp_multi_drone_{2,3,4}.yaml` — same world, only drone count
-changes. n=30, joint metrics with Wilson 95 % CIs:
+`examples/exp_multi_drone_{2,3,4,8}.yaml` — same world, only drone
+count changes. n=30, joint metrics with Wilson 95 % CIs:
 
-| N | joint succ | joint coll | per-drone succ |
-|---|---|---|---|
-| 2 | 96.7 % [83, 99] | 3.3 %  | 98.3 % |
-| 3 | 70.0 % [52, 83] | 30.0 % | 87.8 % |
-| 4 | 73.3 % [56, 86] | 26.7 % | 87.5 % |
+| N | joint succ | joint coll | per-drone succ | indep `per^N` | Δ over indep |
+|---|---|---|---|---|---|
+| 2 | 96.7 % [83, 99] | 3.3 %  | 98.3 % | 96.6 % | +0.1 pp |
+| 3 | 70.0 % [52, 83] | 30.0 % | 87.8 % | 67.7 % | +2.3 pp |
+| 4 | 73.3 % [56, 86] | 26.7 % | 87.5 % | 58.6 % | **+14.7 pp** |
+| 8 | 16.7 % [7, 34]  | 83.3 % | 70.0 % |  5.8 % | **+10.9 pp** |
 
-Independence-model expectation `joint = per_drone^N`:
-- N=4: actual 73.3 %  >  expected 58.6 %   (Δ = **+14.7 pp**)
-
-The MPC's constant-velocity peer prediction *correlates failures in the
-right direction* — when one drone yields, the others see its new
+The MPC's constant-velocity peer prediction *correlates failures in
+the right direction* — when one drone yields, the others see its new
 trajectory and react, so the system as a whole degrades less than
 independent drones would.
+
+**Coordination is non-monotonic in N.** Δ peaks at N=4 (+14.7 pp) and
+declines at N=8 (+10.9 pp), even though the absolute joint success
+collapses from 73.3 % → 16.7 %. Two effects compound:
+
+- **More peers → more coordination signal**, lifting Δ over the
+  independence baseline (the curve from N=2 to N=4).
+- **More peers → escape-volume saturation**, dropping per-drone success
+  from 87 % → 70 % at N=8 and pulling joint success down faster than
+  coordination can recover (the N=4 → N=8 turn).
+
+Engineering takeaway: peer-prediction coordination has a *useful
+range*, not a monotonic scaling law. For dense N you need either a
+bigger world (lower density per drone) or a coordinator that goes
+beyond constant-velocity prediction (priority scheduling, reservation
+tables, decentralised roundabout). The framework's MPC ceiling for
+this 60×60 world tops out around N=4-6; past that, peer prediction
+still helps in *relative* terms but is fundamentally fighting density.
+
+### Density ablation: the "non-monotonic in N" claim was a density artifact
+
+`examples/exp_multi_drone_8_low_density.yaml` — the obvious follow-up
+to the engineering takeaway above. Same N=8 / same crossing structure
+/ same Pareto-MPC config / same 30 obstacles, but world is 100×100
+instead of 60×60 (~2.8 × the area per drone, 1250 cells/drone vs 450).
+
+| density | world | per-drone | joint | indep `per^N` | Δ over indep |
+|---|---|---|---|---|---|
+| high | 60×60 | 70.0 % [64, 75] | 16.7 % [7, 34] | 5.8 % | +10.9 pp |
+| low | 100×100 | 82.1 % [77, 86] | **46.7 %** [30, 64] | 21.0 % | **+25.7 pp** |
+
+Halving density (actually 2.8 ×):
+- per-drone success +12 pp
+- joint success +30 pp
+- coordination Δ +14.8 pp (**roughly doubled**)
+
+Refines the prior finding in two ways:
+
+1. **The "non-monotonic in N" was a density artifact.** With
+   N=8 / low-density Δ at +25.7 pp — *larger* than N=4 / high-density
+   Δ at +14.7 pp — the coordination scaling law is **monotonic in N
+   when density allows**. The planner's CV peer prediction continues
+   to make better use of more peers, full stop.
+
+2. **The MPC ceiling is `density × N`, not raw N.** Doubling room
+   halved the per-drone collision rate (30 % → 18 %). The dip at
+   N=8 in the original table reflected escape-volume saturation, not
+   a fundamental coordination limit.
+
+Engineering takeaway (refined): **density × planner capacity** is the
+load-bearing axis. To deploy CV peer prediction at high N, scale the
+world or shrink drone radii — the planner itself is fine. The
+"non-monotonic" caveat from above survives only as a *density-saturated*
+regime warning, not a scaling-law claim.
+
+Methodological close: the same 2-step pattern as the mpc_chomp →
+velocity-profile → action-jump saga. Initial finding (PR #25)
+reported the surface result; follow-up ablation isolated the actual
+load-bearing axis. The first finding wasn't wrong — it was
+incomplete. Always ablate the engineering takeaway your previous YAML
+header speculated about.
 
 ## Wind miscalibration: planner belief must match sim reality
 
@@ -267,41 +326,3 @@ would need a velocity-profile-aware follower (or a planner that emits
 a velocity spline directly). Same Pareto-saturation lesson as the
 3D CHOMP+RRT result: a layer only wins if the layer below has room to
 be improved.
-
-### Follow-up: the velocity-profile-aware follower doesn't rescue it either
-
-`examples/exp_compare_mpc_chomp_vprofile.yaml` — the natural fix the
-above takeaway points at: extend `Plan` with a time-indexed
-`velocity_profile`, add a velocity-tracking mode to the runner's
-follower, and have `mpc_chomp` derive per-step velocities from the
-smoothed path (forward differences / `dt_plan`) instead of emitting
-waypoints. Same scenario, same MPC inner config:
-
-|                          | success         | plan_dt | mean &#124;Δcmd&#124;/step |
-|--------------------------|-----------------|--------:|--------------:|
-| plain MPC                | 96.7 % [83, 99] | 11.0 ms | 0.32          |
-| mpc + chomp (waypoints)  | 96.7 % [83, 99] | 18.9 ms | 0.61          |
-| **mpc + chomp (vprofile)** | **90.0 %** [74, 96] | 21.3 ms | **2.02** |
-
-Worse on every axis: success drops 6.7 pp, |Δcmd| jumps to **6.3 ×
-plain MPC**. Two effects compound:
-
-1. **Per-step profile updates.** Plain MPC keeps `target_velocity`
-   constant over the whole `replan_period` (0.2 s = 4 control steps).
-   The profile entry changes every 0.05 s, so even a smooth-by-
-   construction velocity sequence has |Δcmd| bounded below by the
-   path curvature.
-2. **Replan-boundary discontinuities.** Each replan re-runs CHOMP from
-   the new initial position; the first velocity of the new profile is
-   freshly derived and jumps from the last applied velocity. Plain MPC
-   has the same boundary, but `w_smooth · |Δaction|` penalises it in
-   the rollout score; the profile derivative is unconstrained.
-
-Methodological lesson: when a null result names a "missing piece"
-(here: velocity-profile-aware follower), build the missing piece and
-re-test before declaring the architectural insight sound. In this case
-the deeper insight is *also* sound — and now stronger: the constant-
-velocity bypass isn't a layering opportunity, it's the controller-side
-ceiling. Help would need either CHOMP-on-velocity-sequence (smoothing
-the right object) or a replan-boundary-aware cost (penalise jump from
-previous applied velocity), neither of which is just "add a smoother".

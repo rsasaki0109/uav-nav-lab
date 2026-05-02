@@ -104,6 +104,7 @@ class AirSimBridge(SimInterface):
         max_steps: int = 2000,
         lidars: list[str] | None = None,
         cameras: list[Mapping[str, Any]] | None = None,
+        depths: list[Mapping[str, Any]] | None = None,
         client: Any = None,
     ) -> None:
         self.dt = float(dt)
@@ -125,6 +126,23 @@ class AirSimBridge(SimInterface):
             {"name": str(c["name"]), "image_type": str(c.get("image_type", "scene"))}
             for c in (cameras or [])
         ]
+        # Depth-camera specs: each {name, image_type=depth_planar by default,
+        # fov_deg, width, height}. Per step we pull depth_planar with
+        # pixels_as_float=True and stash a {depth, intrinsics} payload at
+        # state.extra["depth_images"][name] for the depth_image_occupancy
+        # sensor to consume. Width/height are required because AirSim's
+        # ImageResponse carries them but we need the values *before* the
+        # call to compute intrinsics from fov.
+        self.depths: list[dict[str, Any]] = [
+            {
+                "name": str(d["name"]),
+                "image_type": str(d.get("image_type", "depth_planar")),
+                "fov_deg": float(d.get("fov_deg", 90.0)),
+                "width": int(d.get("width", 256)),
+                "height": int(d.get("height", 144)),
+            }
+            for d in (depths or [])
+        ]
         # `client` lets tests inject a fake airsim client; in production
         # the real client is created lazily on first reset/step.
         self._client: Any = client
@@ -135,6 +153,7 @@ class AirSimBridge(SimInterface):
     def from_config(cls, cfg: Mapping[str, Any], scenario: Any) -> "AirSimBridge":
         lidars_cfg = cfg.get("lidars", []) or []
         cameras_cfg = cfg.get("cameras", []) or []
+        depths_cfg = cfg.get("depths", []) or []
         return cls(
             dt=float(cfg.get("dt", 0.05)),
             scenario=scenario,
@@ -145,6 +164,7 @@ class AirSimBridge(SimInterface):
             max_steps=int(cfg.get("max_steps", 2000)),
             lidars=[str(name) for name in lidars_cfg],
             cameras=list(cameras_cfg),
+            depths=list(depths_cfg),
         )
 
     def _ensure_client(self) -> Any:
@@ -190,6 +210,38 @@ class AirSimBridge(SimInterface):
             )
             for spec in self.cameras
         ]
+
+    def _build_depth_requests(self) -> list[Any]:
+        """ImageRequests for the depth-camera specs.
+
+        Uses `pixels_as_float=True` and `compress=False` so the response
+        carries `image_data_float` (a flat list of metres) rather than
+        the colour-mapped PNG that the `cameras: [...]` path produces.
+        Image type defaults to depth_planar — depth_perspective is also
+        valid; depth_vis is *not* (it's the visualisation, not raw)."""
+        import airsim  # type: ignore[import-not-found]
+
+        type_map = {
+            "depth_planar": airsim.ImageType.DepthPlanar,
+            "depth_perspective": airsim.ImageType.DepthPerspective,
+        }
+        return [
+            airsim.ImageRequest(
+                spec["name"],
+                type_map.get(spec["image_type"], airsim.ImageType.DepthPlanar),
+                True,    # pixels_as_float
+                False,   # compress
+            )
+            for spec in self.depths
+        ]
+
+    @staticmethod
+    def _intrinsics_from_fov(fov_deg: float, width: int, height: int) -> dict[str, float]:
+        """AirSim cameras use a horizontal fov; AirSim's pixels are square so
+        fy = fx. Optical centre = image centre."""
+        fov_rad = float(fov_deg) * np.pi / 180.0
+        fx = (width / 2.0) / float(np.tan(fov_rad / 2.0))
+        return {"fx": fx, "fy": fx, "cx": width / 2.0, "cy": height / 2.0}
 
     def reset(
         self,
@@ -287,6 +339,30 @@ class AirSimBridge(SimInterface):
                 spec["name"]: bytes(getattr(resp, "image_data_uint8", b"") or b"")
                 for spec, resp in zip(self.cameras, responses)
             }
+        # Poll any configured depth cameras. These differ from `cameras` in
+        # that we ask AirSim for raw float depth (metres) rather than a
+        # PNG, and we ship per-camera intrinsics alongside so consumers
+        # (depth_image_occupancy) can project pixels to 3D points without
+        # hard-coding any AirSim-specific knowledge.
+        if self.depths:
+            depth_requests = self._build_depth_requests()
+            depth_responses = client.simGetImages(depth_requests, vehicle_name=self.vehicle)
+            depth_bag: dict[str, dict[str, Any]] = {}
+            for spec, resp in zip(self.depths, depth_responses):
+                floats = getattr(resp, "image_data_float", None)
+                if not floats:
+                    continue
+                arr = np.asarray(list(floats), dtype=np.float32).reshape(
+                    spec["height"], spec["width"]
+                )
+                depth_bag[spec["name"]] = {
+                    "depth": arr,
+                    "intrinsics": self._intrinsics_from_fov(
+                        spec["fov_deg"], spec["width"], spec["height"]
+                    ),
+                }
+            if depth_bag:
+                self._state.extra["depth_images"] = depth_bag
         # AirSim's collision flag is the source of truth in physics-simulated
         # worlds; the scenario's occupancy is only used for planner input.
         collision = bool(client.simGetCollisionInfo(vehicle_name=self.vehicle).has_collided)
