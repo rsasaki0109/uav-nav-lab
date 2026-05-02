@@ -1813,3 +1813,24 @@ def test_multi_drone_viz_groups_drones_per_episode(tmp_path: Path) -> None:
     assert len(saved) == 2
     for p in saved:
         assert p.exists() and p.stat().st_size > 0
+
+
+def test_multi_drone_anim_groups_drones_per_episode(tmp_path: Path) -> None:
+    """`uav-nav anim` on a multi-drone run dispatches to the multi-drone
+    animator: one GIF per episode (not per drone), all N drone trajectories
+    rendered together with a per-drone palette colour. Mirrors the
+    `viz_run` test for parity."""
+    pytest.importorskip("matplotlib")
+    pytest.importorskip("PIL")
+    from uav_nav_lab.anim import viz_anim
+
+    cfg = ExperimentConfig.from_yaml(EXAMPLES / "exp_multi_drone.yaml")
+    cfg.num_episodes = 1
+    cfg.simulator["max_steps"] = 100   # very short — keep test fast
+    run_dir = run_experiment(cfg, tmp_path / "multi_anim")
+    saved = viz_anim(run_dir, fps=10)
+    # one GIF per episode (not per drone)
+    assert len(saved) == 1
+    p = saved[0]
+    assert p.suffix == ".gif"
+    assert p.stat().st_size > 1000  # non-empty animation
