@@ -1,0 +1,121 @@
+# 8-drone scale-up: doubles the N=4 density. Same 60×60 world, same
+# obstacle layout (seed=7), same Pareto-MPC config. Pairs go east↔west,
+# north↔south, NE↔SW, NW↔SE — all four crossing axes meet at the
+# centre, so every drone has 6 peers in its prediction window for at
+# least part of the episode.
+#
+# Measured (n=30 episodes = 240 drone-episodes, Wilson 95 % CI):
+#   per-drone success   70.0 %  [63.9, 75.4]
+#   joint success       16.7 %  [ 7.3, 33.6]
+#   planner_dt mean     67.9 ms (well within replan_period=200 ms)
+#
+# Compared to the existing N=2/3/4 series:
+#
+#   |  N  | per-drone | joint actual | indep (per^N) | Δ (actual - indep) |
+#   |-----|-----------|--------------|---------------|--------------------|
+#   |  2  |    98.3   |     96.7     |    96.6       |     +0.1 pp        |
+#   |  3  |    87.8   |     70.0     |    67.7       |     +2.3 pp        |
+#   |  4  |    87.5   |     73.3     |    58.6       |    +14.7 pp        |
+#   |  8  |    70.0   |     16.7     |     5.8       |    +10.9 pp        |
+#
+# Two findings:
+#
+# 1) **Peer prediction continues to coordinate at N=8** — Δ stays
+#    positive (+10.9 pp over the independence baseline), confirming
+#    the constant-velocity peer prediction is still doing useful work
+#    when six peers crowd the prediction window. But the *peak* Δ is
+#    at N=4 (+14.7 pp), not N=8 — coordination is non-monotonic in N.
+#
+# 2) **Per-drone success collapses (87 % → 70 %) at N=8** — the
+#    planner runs out of feasible escape directions as peer density
+#    saturates the constant-velocity prediction's safety margins. So
+#    while peer prediction still helps in *relative* terms, in
+#    *absolute* terms joint success goes from 73.3 % → 16.7 %. The
+#    framework's MPC ceiling for this world geometry tops out around
+#    N=4-6; past that, even perfect peer prediction can't recover what
+#    is fundamentally a density problem (the 60×60 world has only so
+#    many lanes through the centre).
+#
+# Engineering takeaway: peer-prediction coordination has a *useful
+# range*, not a monotonic scaling law. For dense N you need either a
+# bigger world (lower density) or a non-MPC coordinator (e.g. priority
+# scheduling, reservation table, decentralised roundabout).
+#
+# Reproduce: uav-nav run examples/exp_multi_drone_8.yaml
+#            uav-nav eval results/multi_drone_8
+name: multi_drone_8
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: multi_drone_grid
+  size: [60, 60]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 30
+    seed: 7
+  drones:
+    - name: east
+      start: [3.0, 30.0]
+      goal:  [55.0, 30.0]
+      radius: 0.4
+    - name: west
+      start: [55.0, 30.0]
+      goal:  [3.0, 30.0]
+      radius: 0.4
+    - name: north
+      start: [30.0, 3.0]
+      goal:  [30.0, 55.0]
+      radius: 0.4
+    - name: south
+      start: [30.0, 55.0]
+      goal:  [30.0, 3.0]
+      radius: 0.4
+    # 4 diagonal pairs — these add the second crossing axis density.
+    - name: ne
+      start: [8.0, 8.0]
+      goal:  [50.0, 50.0]
+      radius: 0.4
+    - name: sw
+      start: [50.0, 50.0]
+      goal:  [8.0, 8.0]
+      radius: 0.4
+    - name: nw
+      start: [8.0, 50.0]
+      goal:  [50.0, 8.0]
+      radius: 0.4
+    - name: se
+      start: [50.0, 8.0]
+      goal:  [8.0, 50.0]
+      radius: 0.4
+
+simulator:
+  type: dummy_2d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: mpc
+  max_speed: 7.0
+  replan_period: 0.2
+  horizon: 60
+  dt_plan: 0.05
+  n_samples: 32
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  safety_margin: 0.6
+  use_prediction: true
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/multi_drone_8

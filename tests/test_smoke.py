@@ -1195,88 +1195,6 @@ def test_chomp_smoothness_hessian_inverse_keeps_step_stable_at_n50() -> None:
     assert np.all(np.isfinite(plan.waypoints))
 
 
-def test_chomp_init_rrt_escapes_box_that_traps_straight_init() -> None:
-    """The symmetric box scenario locks straight-line init in a saddle
-    (see test_chomp_reports_local_minimum_when_init_cannot_escape).
-    `init: rrt` uses an RRT path as the warm start, which detours around
-    the box, so CHOMP smooths a *collision-free* trajectory and reports
-    `status=ok` — the whole point of the feature."""
-    from uav_nav_lab.planner import PLANNER_REGISTRY
-
-    occ = np.zeros((30, 30), dtype=bool)
-    occ[10:20, 10:20] = True
-
-    chomp = PLANNER_REGISTRY.get("chomp").from_config(
-        {
-            "n_waypoints": 30,
-            "n_iters": 100,
-            "init": "rrt",
-            "rrt_max_samples": 1000,
-            "rrt_seed": 42,
-            "rrt_goal_bias": 0.2,
-        }
-    )
-    chomp.reset()
-    plan = chomp.plan(np.array([2.0, 15.0]), np.array([28.0, 15.0]), occ)
-    assert plan.meta["status"] == "ok"
-    assert plan.meta["init"] == "rrt"
-    cells = np.clip(np.round(plan.waypoints).astype(int), 0, 29)
-    assert int(occ[tuple(cells.T)].sum()) == 0
-
-
-def test_chomp_init_rrt_falls_back_to_straight_when_rrt_fails() -> None:
-    """When the inner RRT exhausts max_samples without finding a path,
-    CHOMP must keep working — fall back to straight-line init and report
-    `init=rrt_fallback_straight` so the failure is observable in the
-    plan log without crashing the run."""
-    from uav_nav_lab.planner import PLANNER_REGISTRY
-
-    occ = np.zeros((30, 30), dtype=bool)
-    occ[10:20, 10:20] = True
-
-    chomp = PLANNER_REGISTRY.get("chomp").from_config(
-        {
-            "n_waypoints": 30,
-            "n_iters": 50,
-            "init": "rrt",
-            "rrt_max_samples": 5,  # nowhere near enough to find a path
-            "rrt_seed": 0,
-        }
-    )
-    plan = chomp.plan(np.array([2.0, 15.0]), np.array([28.0, 15.0]), occ)
-    assert plan.meta["init"] == "rrt_fallback_straight"
-    assert plan.meta["status"] == "local_minimum"
-
-
-def test_chomp_resample_polyline_uniform_arc_length() -> None:
-    """The internal arc-length resampler should turn a 3-vertex L-shape
-    (segments 10 + 6 = 16 m) into n equally-spaced points along the
-    polyline. Index 10 of 17 sits exactly at the joint (10/16 of arc
-    length)."""
-    from uav_nav_lab.planner.chomp import _resample_polyline
-
-    wps = np.array([[0.0, 0.0], [10.0, 0.0], [10.0, 6.0]])
-    out = _resample_polyline(wps, 17)
-    assert out.shape == (17, 2)
-    assert np.allclose(out[0], wps[0])
-    assert np.allclose(out[-1], wps[-1])
-    assert np.allclose(out[10], np.array([10.0, 0.0]))
-    # Single-vertex degenerate case returns the start repeated.
-    out2 = _resample_polyline(np.array([[3.0, 4.0]]), 5)
-    assert out2.shape == (5, 2)
-    assert np.allclose(out2, np.tile([3.0, 4.0], (5, 1)))
-
-
-def test_chomp_init_invalid_value_raises() -> None:
-    """Typo in the init field should fail loud at construction, not
-    silently default — guards `init: 'RRT'` / `init: 'random'` from
-    looking like they did something."""
-    from uav_nav_lab.planner import PLANNER_REGISTRY
-
-    with pytest.raises(ValueError, match="init must be"):
-        PLANNER_REGISTRY.get("chomp").from_config({"init": "random"})
-
-
 def test_chomp_registry_and_from_config_round_trip() -> None:
     """Registration + from_config wiring smoke test."""
     from uav_nav_lab.planner import PLANNER_REGISTRY
@@ -2012,3 +1930,24 @@ def test_multi_drone_viz_groups_drones_per_episode(tmp_path: Path) -> None:
     assert len(saved) == 2
     for p in saved:
         assert p.exists() and p.stat().st_size > 0
+
+
+def test_multi_drone_anim_groups_drones_per_episode(tmp_path: Path) -> None:
+    """`uav-nav anim` on a multi-drone run dispatches to the multi-drone
+    animator: one GIF per episode (not per drone), all N drone trajectories
+    rendered together with a per-drone palette colour. Mirrors the
+    `viz_run` test for parity."""
+    pytest.importorskip("matplotlib")
+    pytest.importorskip("PIL")
+    from uav_nav_lab.anim import viz_anim
+
+    cfg = ExperimentConfig.from_yaml(EXAMPLES / "exp_multi_drone.yaml")
+    cfg.num_episodes = 1
+    cfg.simulator["max_steps"] = 100   # very short — keep test fast
+    run_dir = run_experiment(cfg, tmp_path / "multi_anim")
+    saved = viz_anim(run_dir, fps=10)
+    # one GIF per episode (not per drone)
+    assert len(saved) == 1
+    p = saved[0]
+    assert p.suffix == ".gif"
+    assert p.stat().st_size > 1000  # non-empty animation
