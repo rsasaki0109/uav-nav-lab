@@ -237,6 +237,119 @@ def _animate_episode_3d(plt, animation, cfg: ExperimentConfig, ep: dict, scenari
     return fig, anim
 
 
+def _animate_episode_multi_2d(
+    plt, animation, cfg: ExperimentConfig, drones_eps: list[dict], scenario, fps: int
+) -> Any:
+    """Render all N drones from a single multi-drone 2D episode in one GIF.
+
+    Mirrors `_animate_episode_2d`'s structure but draws every drone's
+    trajectory + current position with a per-drone palette colour. Title
+    reports the joint outcome and per-drone outcomes — same convention as
+    the static PNG renderer in `viz._render_episode_multi_2d`.
+    """
+    import numpy as np
+
+    res = scenario.resolution
+    nx, ny = scenario.occupancy.shape
+    drones_eps = sorted(drones_eps, key=lambda e: e["meta"].get("drone_id", 0))
+    if not drones_eps or not drones_eps[0]["steps"]:
+        return None
+
+    # All drones share the same step grid (multi-runner ticks once per global
+    # step); use drone 0 to anchor the timeline.
+    n_steps = max(len(e["steps"]) for e in drones_eps)
+    dt = float(cfg.simulator.get("dt", 0.05))
+    sim_fps = 1.0 / dt
+    stride = max(1, int(round(sim_fps / fps)))
+    frame_indices = list(range(0, n_steps, stride))
+    if frame_indices[-1] != n_steps - 1:
+        frame_indices.append(n_steps - 1)
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.set_xlim(0, nx * res)
+    ax.set_ylim(0, ny * res)
+    ax.set_aspect("equal")
+    ax.imshow(
+        scenario._static_occ.T,
+        origin="lower",
+        extent=(0, nx * res, 0, ny * res),
+        cmap="Greys",
+        alpha=0.5,
+        interpolation="nearest",
+    )
+
+    palette = ["tab:blue", "tab:orange", "tab:green", "tab:red", "tab:purple",
+               "tab:brown", "tab:pink", "tab:olive"]
+    traj_lines: list[Any] = []
+    drone_pts: list[Any] = []
+    for ep in drones_eps:
+        i = int(ep["meta"].get("drone_id", 0))
+        color = palette[i % len(palette)]
+        name = ep["meta"].get("drone_name", f"d{i}")
+        outcome = ep.get("outcome", "?")
+        (line,) = ax.plot([], [], "-", color=color, lw=1.3,
+                          label=f"{name} ({outcome})", zorder=3)
+        (pt,) = ax.plot([], [], "o", color=color, ms=8, zorder=5,
+                        mec="black", mew=0.5)
+        traj_lines.append(line)
+        drone_pts.append(pt)
+        if i < len(scenario.drones):
+            d = scenario.drones[i]
+            ax.plot(d.start[0], d.start[1], "o", color=color, ms=10,
+                    mec="black", mew=0.5, zorder=4)
+            ax.plot(d.goal[0], d.goal[1], "*", color=color, ms=14,
+                    mec="black", mew=0.5, zorder=4)
+
+    dyn_scatter = ax.scatter([], [], s=120, c="dimgray", marker="o",
+                             edgecolors="black", zorder=4, label="dynamic")
+    title = ax.set_title("")
+    ax.legend(loc="lower right", fontsize=7)
+
+    scenario.reseed(drones_eps[0]["meta"]["seed"])
+    sim_time_at_step: dict[int, float] = {i: i * dt for i in range(n_steps)}
+
+    def update(idx_in_frames: int):
+        i = frame_indices[idx_in_frames]
+        if idx_in_frames == 0:
+            scenario.reseed(drones_eps[0]["meta"]["seed"])
+            scenario._steps_advanced = 0
+        target = i
+        cur = getattr(scenario, "_steps_advanced", 0)
+        for _ in range(cur, target):
+            scenario.advance(dt)
+        scenario._steps_advanced = target
+
+        for ep, line, pt in zip(drones_eps, traj_lines, drone_pts):
+            steps = ep["steps"]
+            j = min(i, len(steps) - 1)
+            pts = [(s["true_pos"][0], s["true_pos"][1]) for s in steps[: j + 1]]
+            if pts:
+                tx, ty = zip(*pts)
+                line.set_data(tx, ty)
+                pt.set_data([tx[-1]], [ty[-1]])
+
+        dyn = scenario.dynamic_obstacles
+        if dyn:
+            xs = [d["position"][0] for d in dyn]
+            ys = [d["position"][1] for d in dyn]
+            dyn_scatter.set_offsets(np.column_stack([xs, ys]))
+        else:
+            dyn_scatter.set_offsets(np.zeros((0, 2)))
+
+        outcomes = [e.get("outcome", "?") for e in drones_eps]
+        joint = "all_success" if all(o == "success" for o in outcomes) else "mixed"
+        title.set_text(
+            f"ep {drones_eps[0]['meta']['episode']:03d}  joint={joint}  "
+            f"t={sim_time_at_step[i]:.2f}s"
+        )
+        return (*traj_lines, *drone_pts, dyn_scatter, title)
+
+    anim = animation.FuncAnimation(
+        fig, update, frames=len(frame_indices), interval=1000 / fps, blit=False
+    )
+    return fig, anim
+
+
 def viz_anim(run_dir: Path, fps: int = 20) -> list[Path]:
     plt, animation = _need_mpl_anim()
     run_dir = Path(run_dir)
@@ -250,10 +363,36 @@ def viz_anim(run_dir: Path, fps: int = 20) -> list[Path]:
     if scenario.ndim not in (2, 3):
         raise NotImplementedError(f"anim supports 2D / 3D scenarios (got ndim={scenario.ndim}).")
 
+    is_multi = str(cfg.scenario.get("type", "")) == "multi_drone_grid"
     saved: list[Path] = []
+
+    if is_multi and scenario.ndim == 2:
+        # Group per-drone JSONs by episode index, render one GIF per episode.
+        episodes: list[dict] = []
+        for ef in sorted(run_dir.glob("episode_*.json")):
+            if ef.stem.endswith("_joint"):
+                continue
+            with ef.open("r", encoding="utf-8") as f:
+                episodes.append(json.load(f))
+        by_ep: dict[int, list[dict]] = {}
+        for ep in episodes:
+            by_ep.setdefault(int(ep["meta"]["episode"]), []).append(ep)
+        for ep_idx in sorted(by_ep):
+            result = _animate_episode_multi_2d(
+                plt, animation, cfg, by_ep[ep_idx], scenario, fps=fps,
+            )
+            if result is None:
+                continue
+            fig, anim = result
+            out = run_dir / f"episode_{ep_idx:03d}.gif"
+            anim.save(out, writer="pillow", fps=fps)
+            plt.close(fig)
+            saved.append(out)
+        return saved
+
     for ef in sorted(run_dir.glob("episode_*.json")):
         if "_drone_" in ef.stem or ef.stem.endswith("_joint"):
-            continue  # multi-drone artifacts handled by 2D path elsewhere
+            continue
         with ef.open("r", encoding="utf-8") as f:
             ep = json.load(f)
         if scenario.ndim == 3:
