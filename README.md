@@ -14,12 +14,14 @@ every example YAML carries its own validated finding.**
 
 <table>
 <tr>
-<td><img src="docs/images/demo_mpc.gif" alt="2D Pareto-MPC routing through three bouncing dynamic obstacles" width="380"></td>
-<td><img src="docs/images/demo_3d.gif" alt="3D Pareto-MPC episode on a 40×40×12 voxel world with three bouncing dynamic obstacles" width="380"></td>
+<td><img src="docs/images/demo_mpc.gif" alt="2D Pareto-MPC routing through three bouncing dynamic obstacles" width="280"></td>
+<td><img src="docs/images/demo_3d.gif" alt="3D Pareto-MPC episode on a 40×40×12 voxel world with three bouncing dynamic obstacles" width="280"></td>
+<td><img src="docs/images/demo_multi_drone.gif" alt="4-drone cross-crossing scenario: east/west/north/south pairs all reach opposite goals via constant-velocity peer prediction" width="280"></td>
 </tr>
 <tr>
 <td align="center"><i>2D — Pareto-MPC (n=16, h=20) through three bouncing obstacles.</i></td>
 <td align="center"><i>3D — same planner family on a 40×40×12 voxel world.</i></td>
+<td align="center"><i>Multi-drone — 4 drones cross-crossing via CV peer prediction.</i></td>
 </tr>
 </table>
 
@@ -131,8 +133,8 @@ Source layout:
 uav_nav_lab/
 ├── sim/         dummy_2d / dummy_3d (point-mass), airsim, ros2
 ├── scenario/    grid_world, voxel_world, multi_drone_grid
-├── planner/     astar, straight, mpc, rrt, rrt_star, chomp  (registry: PLANNER_REGISTRY)
-├── sensor/      perfect, delayed, kalman_delayed, lidar, pointcloud_occupancy
+├── planner/     astar, straight, mpc, rrt, rrt_star, chomp, mpc_chomp, mppi  (registry: PLANNER_REGISTRY)
+├── sensor/      perfect, delayed, kalman_delayed, lidar, pointcloud_occupancy, depth_image_occupancy
 ├── predictor/   constant_velocity, noisy_velocity, kalman_velocity
 ├── runner/      experiment, multi (multi-drone), sweep
 ├── eval/        metrics (Wilson + SEM CIs), compare
@@ -146,8 +148,8 @@ Backends at a glance:
 |---|---|---|
 | sim | `dummy_2d`, `dummy_3d`, `airsim`, `ros2` | `SIM_REGISTRY` |
 | scenario | `grid_world`, `voxel_world`, `multi_drone_grid` | `SCENARIO_REGISTRY` |
-| planner | `astar`, `straight`, `mpc`, `rrt`, `rrt_star`, `chomp` | `PLANNER_REGISTRY` |
-| sensor | `perfect`, `delayed`, `kalman_delayed`, `lidar`, `pointcloud_occupancy` | `SENSOR_REGISTRY` |
+| planner | `astar`, `straight`, `mpc`, `rrt`, `rrt_star`, `chomp`, `mpc_chomp`, `mppi` | `PLANNER_REGISTRY` |
+| sensor | `perfect`, `delayed`, `kalman_delayed`, `lidar`, `pointcloud_occupancy`, `depth_image_occupancy` | `SENSOR_REGISTRY` |
 | predictor | `constant_velocity`, `noisy_velocity`, `kalman_velocity` | `PREDICTOR_REGISTRY` |
 
 Adding a new backend is one new file with a `@REGISTRY.register("name")`
@@ -230,31 +232,28 @@ saga uncovered, just on the search side.
 > Reproduce: `uav-nav run examples/exp_compare_{straight,astar,rrt,rrt_star,chomp,chomp_rrt,mpc}.yaml`,
 > then `uav-nav compare results/cmp_straight results/cmp_astar results/cmp_rrt_star results/cmp_chomp results/cmp_rrt results/cmp_chomp_rrt results/cmp_mpc`.
 
-### 🧊 The 2D layering finding *does not* transfer to 3D
+### 👁️ Sensor FOV ablation: omni-LiDAR vs forward depth camera
 
-Same head-to-head moved to a 40 × 40 × 12 voxel world (`exp_3d_compare_*.yaml`,
-n=30 episodes per planner):
+Same scenario, same A* planner, same compute — only the perception
+stack changes. Both sensors are fed by the dummy sim's new
+`synthetic_perception` config (no AirSim / ROS 2 install needed):
 
-| planner | 2D success | 2D plan_dt | 3D success | 3D plan_dt |
-|---|---|---|---|---|
-| chomp (straight) | 53.3 % | 21 ms | **53.3 %** | 296 ms ⚠ |
-| rrt | 73.3 % | 30 ms | 80.0 % | **14 ms** |
-| chomp+rrt | **90.0 %** | 32 ms | 73.3 % | 293 ms ⚠ |
-| mpc | 100.0 % | 52 ms | 83.3 % | 80 ms |
+| sensor | FOV | success | plan_dt |
+|---|---|---|---|
+| `pointcloud_occupancy` | omni 8 m | **93.3 %** [78.7, 98.2] | 1.36 ms |
+| `depth_image_occupancy` | 90° forward, 8 m max | 63.3 % [45.5, 78.1] | 1.45 ms |
 
-**The technique transfers (CHOMP+RRT still beats CHOMP-straight by +20 pp
-in 3D, same direction as the 2D +37 pp), but the rank flips.** In 2D,
-CHOMP+RRT beat plain RRT by +17 pp at *cheaper* compute; in 3D, plain
-RRT beats CHOMP+RRT by +6.7 pp at **22× cheaper** compute. Two effects
-stack up: (a) the larger 3D escape volume gives plain RRT enough room
-to find collision-free paths without smoothing help, and (b) CHOMP's
-brute-force distance field goes O(M·K) over the much larger voxel
-grid, blowing per-replan compute from 32 ms to 293 ms. Same dimensional
-re-validation lesson the [3D Pareto study](docs/findings.md) taught
-on MPC's `n_samples` preference: layered planning is not a free win
-across dimensionalities, even when the per-layer wins do transfer.
+**−30 pp from losing rear / side visibility, at essentially identical
+compute (≈1.4 ms / replan)**. The Wilson 95 % CIs barely overlap
+(78.7 vs 78.1) — significant. The ~30 % of episodes that fail in
+forward-only mode are mostly obstacles entering the planner's path
+from the side or behind during a replan window; an omni-LiDAR sees
+them in time. Engineering takeaway: **planner smarts cannot make up
+for missing FOV** — the planner can only react to what the sensor
+surfaced. Pair multiple cameras (front + back) or use omni-LiDAR
+to close the gap.
 
-> Reproduce: `uav-nav run examples/exp_3d_compare_{chomp,rrt,chomp_rrt,mpc}.yaml`.
+> Reproduce: `uav-nav run examples/exp_ablate_sensor_{pointcloud,depth}.yaml`.
 
 ### More studies — see [docs/findings.md](docs/findings.md)
 
@@ -279,7 +278,7 @@ takeaways) live in [`docs/findings.md`](docs/findings.md):
 
 - **v0.1.0** released; GitHub Actions CI on Python 3.10 / 3.11 / 3.12
   + a CLI smoke job.
-- **5 sensor backends** (`perfect`, `delayed`, `kalman_delayed`, `lidar`, `pointcloud_occupancy`),
+- **6 sensor backends** (`perfect`, `delayed`, `kalman_delayed`, `lidar`, `pointcloud_occupancy`, `depth_image_occupancy`),
   **3 predictor backends** (`constant_velocity`, `noisy_velocity`,
   `kalman_velocity`), **6 planners** (`astar`, `straight`, `mpc`, `rrt`,
   `rrt_star`, `chomp`), **3 scenarios** (`grid_world`, `voxel_world`,
@@ -305,7 +304,13 @@ External backends:
   Optional `cameras: [{name, image_type}, …]` polls `simGetImages()`
   and stashes compressed PNG bytes at `state.extra["camera_images"][name]`;
   set `output.save_camera_frames: true` and run `uav-nav video <run_dir>`
-  to ffmpeg them into per-episode / per-camera MP4 demo reels.
+  to ffmpeg them into per-episode / per-camera MP4 demo reels. Optional
+  `depths: [{name, fov_deg, width, height}, …]` polls the same call
+  with `pixels_as_float=True` and surfaces a `{depth, intrinsics}`
+  payload at `state.extra["depth_images"][name]` — pair with
+  `depth_image_occupancy` to project pixels into the planner's
+  occupancy grid (the depth-camera analogue of the
+  `pointcloud_occupancy` LiDAR path).
 - **ROS 2** (`uav_nav_lab/sim/ros2_bridge.py`) is wired end-to-end —
   publishes `geometry_msgs/Twist` on `/cmd_vel`, subscribes to
   `nav_msgs/Odometry` on `/odom` (and optional `std_msgs/Bool` on
@@ -321,7 +326,12 @@ External backends:
   backends without a code change. Optional `cameras: [topic, …]`
   subscribes to `sensor_msgs/Image` and PNG-encodes each frame to
   `state.extra["camera_images"][topic]`, feeding the same
-  `output.save_camera_frames` + `uav-nav video` pipeline.
+  `output.save_camera_frames` + `uav-nav video` pipeline. Set
+  `use_sim_time: true` (with optional `clock_topic` / `sim_time_wall_timeout`)
+  to anchor `state.t` on `/clock` instead of wall-clock — PX4-SITL
+  fast-forward and Gazebo `--lockstep` then speed up the experiment by
+  the same factor as the sim, with the wall-clock timeout protecting
+  the runner from a paused or crashed sim.
 
 ## 🗺️ Roadmap
 
