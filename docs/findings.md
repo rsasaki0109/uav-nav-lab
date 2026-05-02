@@ -151,22 +151,38 @@ keep up.
 opposite-corner goals while routing around each other via the MPC's
 constant-velocity peer prediction.*
 
-`examples/exp_multi_drone_{2,3,4}.yaml` — same world, only drone count
-changes. n=30, joint metrics with Wilson 95 % CIs:
+`examples/exp_multi_drone_{2,3,4,8}.yaml` — same world, only drone
+count changes. n=30, joint metrics with Wilson 95 % CIs:
 
-| N | joint succ | joint coll | per-drone succ |
-|---|---|---|---|
-| 2 | 96.7 % [83, 99] | 3.3 %  | 98.3 % |
-| 3 | 70.0 % [52, 83] | 30.0 % | 87.8 % |
-| 4 | 73.3 % [56, 86] | 26.7 % | 87.5 % |
+| N | joint succ | joint coll | per-drone succ | indep `per^N` | Δ over indep |
+|---|---|---|---|---|---|
+| 2 | 96.7 % [83, 99] | 3.3 %  | 98.3 % | 96.6 % | +0.1 pp |
+| 3 | 70.0 % [52, 83] | 30.0 % | 87.8 % | 67.7 % | +2.3 pp |
+| 4 | 73.3 % [56, 86] | 26.7 % | 87.5 % | 58.6 % | **+14.7 pp** |
+| 8 | 16.7 % [7, 34]  | 83.3 % | 70.0 % |  5.8 % | **+10.9 pp** |
 
-Independence-model expectation `joint = per_drone^N`:
-- N=4: actual 73.3 %  >  expected 58.6 %   (Δ = **+14.7 pp**)
-
-The MPC's constant-velocity peer prediction *correlates failures in the
-right direction* — when one drone yields, the others see its new
+The MPC's constant-velocity peer prediction *correlates failures in
+the right direction* — when one drone yields, the others see its new
 trajectory and react, so the system as a whole degrades less than
 independent drones would.
+
+**Coordination is non-monotonic in N.** Δ peaks at N=4 (+14.7 pp) and
+declines at N=8 (+10.9 pp), even though the absolute joint success
+collapses from 73.3 % → 16.7 %. Two effects compound:
+
+- **More peers → more coordination signal**, lifting Δ over the
+  independence baseline (the curve from N=2 to N=4).
+- **More peers → escape-volume saturation**, dropping per-drone success
+  from 87 % → 70 % at N=8 and pulling joint success down faster than
+  coordination can recover (the N=4 → N=8 turn).
+
+Engineering takeaway: peer-prediction coordination has a *useful
+range*, not a monotonic scaling law. For dense N you need either a
+bigger world (lower density per drone) or a coordinator that goes
+beyond constant-velocity prediction (priority scheduling, reservation
+tables, decentralised roundabout). The framework's MPC ceiling for
+this 60×60 world tops out around N=4-6; past that, peer prediction
+still helps in *relative* terms but is fundamentally fighting density.
 
 ## Wind miscalibration: planner belief must match sim reality
 
