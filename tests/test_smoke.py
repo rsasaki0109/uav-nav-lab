@@ -214,6 +214,78 @@ def test_airsim_bridge_step_round_trips_enu_via_mock_client() -> None:
     assert info.collision is False
 
 
+def test_airsim_bridge_polls_lidar_and_converts_to_enu_via_mock_client() -> None:
+    """When `lidars: [name]` is configured, AirSimBridge.step() should call
+    client.getLidarData(name) and stash an (N, 3) ENU point cloud at
+    state.extra['lidar_points'][name] — converted from AirSim's NED
+    (x, y, z) → (y, x, -z) the same way poses are."""
+    from types import SimpleNamespace
+
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+    from uav_nav_lab.sim.airsim_bridge import AirSimBridge, _ned_pointcloud_to_enu
+
+    # Helper sanity: NED [(1,2,-3), (4,5,-6)] flat → ENU [(2,1,3), (5,4,6)].
+    pts = _ned_pointcloud_to_enu([1.0, 2.0, -3.0, 4.0, 5.0, -6.0])
+    assert pts.shape == (2, 3)
+    assert np.allclose(pts, np.array([[2.0, 1.0, 3.0], [5.0, 4.0, 6.0]]))
+    # Empty / malformed readouts return shape (0, 3) instead of crashing.
+    assert _ned_pointcloud_to_enu([]).shape == (0, 3)
+    assert _ned_pointcloud_to_enu([1.0, 2.0]).shape == (0, 3)
+
+    grid_cls = SCENARIO_REGISTRY.get("grid_world")
+    sc = grid_cls.from_config(
+        {"size": [10, 10], "start": [1.0, 1.0], "goal": [9.0, 9.0], "obstacles": {"type": "none"}}
+    )
+
+    class FakeKin:
+        class _V:
+            x_val = 0.0
+            y_val = 0.0
+            z_val = 0.0
+        position = _V()
+        linear_velocity = _V()
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.lidar_calls: list[tuple[str, str | None]] = []
+
+        def confirmConnection(self) -> None: pass
+        def enableApiControl(self, _on, _vehicle): pass
+        def armDisarm(self, _on, _vehicle): pass
+        def reset(self): pass
+        def simSetVehiclePose(self, *_a, **_kw): pass
+        def simPause(self, _on): pass
+        def simContinueForTime(self, _dt): pass
+
+        def moveByVelocityAsync(self, *_a, **_kw):
+            class _F:
+                def join(self): pass
+            return _F()
+
+        def getMultirotorState(self, vehicle_name=None):  # noqa: ARG002
+            return SimpleNamespace(kinematics_estimated=FakeKin())
+
+        def simGetCollisionInfo(self, vehicle_name=None):  # noqa: ARG002
+            return SimpleNamespace(has_collided=False)
+
+        def getLidarData(self, name, vehicle_name=None):
+            self.lidar_calls.append((name, vehicle_name))
+            # Two NED points that map to predictable ENU rows.
+            return SimpleNamespace(point_cloud=[1.0, 2.0, -3.0, 4.0, 5.0, -6.0])
+
+    fake = FakeClient()
+    bridge = AirSimBridge(dt=0.05, scenario=sc, client=fake, lidars=["FrontLidar"])
+    bridge.reset()
+    out_state, _ = bridge.step(np.array([0.0, 0.0]))
+
+    # Lidar polled with the configured name + vehicle.
+    assert fake.lidar_calls == [("FrontLidar", "Drone1")]
+    # Points landed in state.extra under the lidar name.
+    cloud = out_state.extra["lidar_points"]["FrontLidar"]
+    assert cloud.shape == (2, 3)
+    assert np.allclose(cloud, np.array([[2.0, 1.0, 3.0], [5.0, 4.0, 6.0]]))
+
+
 def test_ros2_bridge_step_round_trips_enu_via_mock_adapter() -> None:
     """Verify the ROS 2 bridge's publish-spin-read plumbing against an
     injected mock adapter — no rclpy install required."""

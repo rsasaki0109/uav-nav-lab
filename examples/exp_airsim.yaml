@@ -38,6 +38,12 @@ simulator:
   dt: 0.05
   max_steps: 1500
   goal_radius: 1.5
+  # lidars: list of LiDAR sensor names configured on the AirSim side
+  # (settings.json). When non-empty, the bridge polls each name with
+  # getLidarData() per step and stashes the (N, 3) ENU point cloud at
+  # state.extra["lidar_points"][name]. Downstream rasterization /
+  # fusion is the consumer's job — this bridge stays perception-agnostic.
+  # lidars: [FrontLidar]
 
 planner:
   type: mpc
