@@ -17,6 +17,7 @@ Wilson 95 % intervals on rates, mean ± 1.96·SEM on continuous metrics.
 - [3D perception-latency cliff: same corner, softened](#3d-perception-latency-cliff-same-corner-softened)
 - [Pareto config materially rewrites prior conclusions](#pareto-config-materially-rewrites-prior-conclusions)
 - [Multi-drone N-scaling and peer-prediction coordination](#multi-drone-n-scaling-and-peer-prediction-coordination)
+- [3D escape volume erases the coordination Δ](#3d-escape-volume-erases-the-coordination-δ)
 - [Wind miscalibration: planner belief must match sim reality](#wind-miscalibration-planner-belief-must-match-sim-reality)
 - [The perception-latency cliff: a four-step research saga](#the-perception-latency-cliff-a-four-step-research-saga)
 - [MPC + CHOMP smoothing: layering on a saturated planner is a wash](#mpc--chomp-smoothing-layering-on-a-saturated-planner-is-a-wash)
@@ -227,6 +228,48 @@ reported the surface result; follow-up ablation isolated the actual
 load-bearing axis. The first finding wasn't wrong — it was
 incomplete. Always ablate the engineering takeaway your previous YAML
 header speculated about.
+
+### 3D escape volume erases the coordination Δ
+
+`examples/exp_multi_drone_3d_{2,3,4}.yaml` — same crossing pattern as
+the 2D N=2/3/4 cases above, lifted to a 40×40×12 voxel_world with the
+3D Pareto MPC config (n_samples=8, horizon=40). Each drone is free to
+detour over or under its peers along the z-axis.
+
+| N | dim | per-drone | joint | indep `per^N` | Δ over indep |
+|---|---|---|---|---|---|
+| 2 | 2D | 98.3 %  | 96.7 % [83, 99] | 96.6 % | +0.1 pp |
+| 2 | 3D | 98.3 %  | 96.7 % [83, 99] | 96.6 % | +0.1 pp |
+| 3 | 2D | 87.8 %  | 70.0 % [52, 83] | 67.7 % | +2.3 pp |
+| 3 | 3D | 88.9 %  | 70.0 % [52, 83] | 70.2 % | -0.2 pp |
+| 4 | 2D | 87.5 %  | 73.3 % [56, 86] | 58.6 % | **+14.7 pp** |
+| 4 | 3D | 95.8 %  | **83.3 %** [66, 93] | 84.3 % | **-1.0 pp** |
+
+The 2D N=4 coordination win (+14.7 pp) **disappears in 3D** even
+though the absolute joint success rises (73 → 83 %). Per-drone success
+jumps with it (87 → 96 %), and `independent^N` rises to match — leaving
+no Δ for peer prediction to take credit for.
+
+Mechanism: in 2D, four crossing drones share the same horizontal
+plane, so peer prediction has to *pick a yielder* every time their paths
+intersect. In 3D, each drone's MPC is free to lift to z=7 while a peer
+slips through at z=5; the rollouts find these out-of-plane detours
+independently, no peer prediction needed. The escape volume *eliminates
+the coordination problem*, it doesn't just soften it.
+
+Engineering takeaway: the value of multi-agent coordination is not
+intrinsic — it's a function of how constrained the per-agent free space
+is. **In 3D / open-volume regimes, "use peer prediction or not" is a
+wash; in 2D / dense regimes it can be the difference between 58 % and
+73 % joint success.** Same Pareto-saturation lesson as everywhere else
+in this framework: a layer only earns its keep when the layer below
+has slack to take from. Coordination here is the layer; per-drone
+escape volume is the slack.
+
+Methodological close: re-validate the *value* of every layer in every
+new dimensionality. Coordination Δ in 2D does not predict Δ in 3D, and
+the headline number (joint succ %) hides the inversion of the
+load-bearing factor (escape volume vs. peer prediction).
 
 ## Wind miscalibration: planner belief must match sim reality
 

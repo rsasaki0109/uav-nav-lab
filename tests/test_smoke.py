@@ -2706,3 +2706,42 @@ def test_multi_drone_anim_groups_drones_per_episode(tmp_path: Path) -> None:
     p = saved[0]
     assert p.suffix == ".gif"
     assert p.stat().st_size > 1000  # non-empty animation
+
+
+def test_multi_drone_voxel_scenario_constructs_3d() -> None:
+    """multi_drone_voxel registers, validates 3D drone coords, and exposes
+    n_drones + ndim==3 so the multi runner can iterate over drones the same
+    way it does for multi_drone_grid."""
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+
+    cls = SCENARIO_REGISTRY.get("multi_drone_voxel")
+    sc = cls.from_config({
+        "size": [20, 20, 8],
+        "obstacles": {"type": "none"},
+        "drones": [
+            {"name": "a", "start": [2.0, 10.0, 4.0], "goal": [18.0, 10.0, 4.0]},
+            {"name": "b", "start": [18.0, 10.0, 4.0], "goal": [2.0, 10.0, 4.0]},
+        ],
+    })
+    assert sc.n_drones == 2
+    assert sc.ndim == 3
+    assert sc.start.shape == (3,)
+    # 2D coords on a drone must be rejected at config-load time
+    with pytest.raises(ValueError):
+        cls.from_config({
+            "size": [20, 20, 8],
+            "obstacles": {"type": "none"},
+            "drones": [{"name": "bad", "start": [2.0, 10.0], "goal": [18.0, 10.0]}],
+        })
+
+
+def test_multi_drone_voxel_runs_and_logs(tmp_path: Path) -> None:
+    """End-to-end smoke: one episode of the 3D 2-drone YAML produces
+    per-drone JSON logs and a joint-summary file, mirroring the 2D path."""
+    cfg = ExperimentConfig.from_yaml(EXAMPLES / "exp_multi_drone_3d_2.yaml")
+    cfg.num_episodes = 1
+    cfg.simulator["max_steps"] = 300
+    run_dir = run_experiment(cfg, tmp_path / "multi_3d")
+    drone_logs = sorted(run_dir.glob("episode_*_drone_*.json"))
+    assert len(drone_logs) == 2  # 1 episode × 2 drones
+    assert (run_dir / "episode_000_joint.json").exists()

@@ -1,0 +1,63 @@
+# 3D multi-drone — 2 drones head-on across a voxel_world.
+#
+# Same start/goal pattern as the 2D head-on case (exp_multi_drone.yaml),
+# now in a 40×40×12 voxel_world with the 3D Pareto MPC config (n_samples=8,
+# horizon=40 — see exp_3d_predictive.yaml). No scenario-level dynamic
+# obstacles; the only "moving obstacles" each drone sees are its peers,
+# fed through a perfect peer sensor.
+#
+# Reproduce:
+#   uav-nav run examples/exp_multi_drone_3d_2.yaml
+#   uav-nav eval results/multi_drone_3d_2
+
+name: multi_drone_3d_2
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: multi_drone_voxel
+  size: [40, 40, 12]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 30
+    seed: 7
+  drones:
+    - name: east
+      start: [3.0, 20.0, 6.0]
+      goal:  [37.0, 20.0, 6.0]
+      radius: 0.4
+    - name: west
+      start: [37.0, 20.0, 6.0]
+      goal:  [3.0, 20.0, 6.0]
+      radius: 0.4
+
+simulator:
+  type: dummy_3d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: mpc
+  max_speed: 8.0
+  replan_period: 0.2
+  horizon: 40
+  dt_plan: 0.05
+  n_samples: 8
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  safety_margin: 0.5
+  use_prediction: true
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/multi_drone_3d_2

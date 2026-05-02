@@ -1,0 +1,81 @@
+# 3D multi-drone — 4 drones in a cross-pattern (east/west/north/south),
+# 3D voxel_world. Same start/goal positions as the 2D N=4 case but each
+# drone is free to use the z-axis to escape — the central question of
+# this experiment is whether the extra escape volume shrinks or grows
+# the coordination Δ over an independence baseline.
+#
+# Result (n=30 episodes):
+#   per-drone success: 95.8 % [90.6, 98.2]
+#   joint success:     83.3 % [66.4, 92.7]
+#   indep `per^4`:     84.3 %
+#   Δ over indep:      -1.0 pp
+#
+# Compare to 2D N=4 (exp_multi_drone_4.yaml): joint 73.3 %, per-drone
+# 87.5 %, Δ +14.7 pp. The 2D coordination win disappears in 3D — the
+# escape volume lets each drone's MPC find an out-of-plane detour
+# independently, so peer prediction has nothing to take credit for.
+# See docs/findings.md "3D escape volume erases the coordination Δ".
+#
+# Reproduce:
+#   uav-nav run examples/exp_multi_drone_3d_4.yaml
+#   uav-nav eval results/multi_drone_3d_4
+
+name: multi_drone_3d_4
+seed: 42
+num_episodes: 30
+
+scenario:
+  type: multi_drone_voxel
+  size: [40, 40, 12]
+  resolution: 1.0
+  obstacles:
+    type: random
+    count: 30
+    seed: 7
+  drones:
+    - name: east
+      start: [3.0, 20.0, 6.0]
+      goal:  [37.0, 20.0, 6.0]
+      radius: 0.4
+    - name: west
+      start: [37.0, 20.0, 6.0]
+      goal:  [3.0, 20.0, 6.0]
+      radius: 0.4
+    - name: north
+      start: [20.0, 3.0, 6.0]
+      goal:  [20.0, 37.0, 6.0]
+      radius: 0.4
+    - name: south
+      start: [20.0, 37.0, 6.0]
+      goal:  [20.0, 3.0, 6.0]
+      radius: 0.4
+
+simulator:
+  type: dummy_3d
+  dt: 0.05
+  max_steps: 1500
+  max_accel: 80.0
+  goal_radius: 1.5
+  drone_radius: 0.4
+
+planner:
+  type: mpc
+  max_speed: 8.0
+  replan_period: 0.2
+  horizon: 40
+  dt_plan: 0.05
+  n_samples: 8
+  resolution: 1.0
+  inflate: 1
+  goal_radius: 1.5
+  safety_margin: 0.5
+  use_prediction: true
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/multi_drone_3d_4
