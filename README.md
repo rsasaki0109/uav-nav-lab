@@ -14,23 +14,25 @@ every example YAML carries its own validated finding.**
 
 <table>
 <tr>
-<td><img src="docs/images/demo_mpc.gif" alt="2D Pareto-MPC routing through three bouncing dynamic obstacles" width="380"></td>
-<td><img src="docs/images/demo_3d.gif" alt="3D Pareto-MPC episode on a 40×40×12 voxel world with three bouncing dynamic obstacles" width="380"></td>
+<td><img src="docs/images/demo_mpc.gif" alt="2D Pareto-MPC routing through three bouncing dynamic obstacles" width="280"></td>
+<td><img src="docs/images/demo_3d.gif" alt="3D Pareto-MPC episode on a 40×40×12 voxel world with three bouncing dynamic obstacles" width="280"></td>
+<td><img src="docs/images/demo_multi_drone.gif" alt="4-drone cross-crossing scenario: east/west/north/south pairs all reach opposite goals via constant-velocity peer prediction" width="280"></td>
 </tr>
 <tr>
 <td align="center"><i>2D — Pareto-MPC (n=16, h=20) through three bouncing obstacles.</i></td>
 <td align="center"><i>3D — same planner family on a 40×40×12 voxel world.</i></td>
+<td align="center"><i>Multi-drone — 4 drones cross-crossing via CV peer prediction.</i></td>
 </tr>
 </table>
 
 </div>
 
 > **TL;DR.** On a 50 × 50 dynamic-obstacle scenario (n=30 episodes,
-> Wilson 95 % CIs), this framework produces — from five one-line
+> Wilson 95 % CIs), this framework produces — from six one-line
 > `uav-nav run` invocations — straight-line **0 %**, A* **20 %**,
-> RRT* **23 %** (CPU-saturated), RRT **73 %**, Pareto-MPC **100 %**.
-> Each example YAML carries the table, the heatmap, and the reproduce
-> command in its header.
+> RRT* **23 %** (CPU-saturated), CHOMP **53 %** (cheapest at 21 ms),
+> RRT **73 %**, Pareto-MPC **100 %**. Each example YAML carries the
+> table, the heatmap, and the reproduce command in its header.
 
 ---
 
@@ -169,20 +171,23 @@ only the planner changes. n=30 episodes per configuration:
 <td align="center"><b>straight</b><br>0.0 %</td>
 <td align="center"><b>astar</b><br>20.0 %</td>
 <td align="center"><b>rrt*</b><br>23.3 %</td>
+<td align="center"><b>chomp</b><br>53.3 %</td>
 <td align="center"><b>rrt</b><br>73.3 %</td>
 <td align="center"><b>mpc (Pareto)</b><br>100.0 %</td>
 </tr>
 <tr>
-<td><img src="docs/images/cmp_straight.png" width="170"></td>
-<td><img src="docs/images/cmp_astar.png" width="170"></td>
-<td><img src="docs/images/cmp_rrt_star.png" width="170"></td>
-<td><img src="docs/images/cmp_rrt.png" width="170"></td>
-<td><img src="docs/images/cmp_mpc.png" width="170"></td>
+<td><img src="docs/images/cmp_straight.png" width="140"></td>
+<td><img src="docs/images/cmp_astar.png" width="140"></td>
+<td><img src="docs/images/cmp_rrt_star.png" width="140"></td>
+<td><img src="docs/images/cmp_chomp.png" width="140"></td>
+<td><img src="docs/images/cmp_rrt.png" width="140"></td>
+<td><img src="docs/images/cmp_mpc.png" width="140"></td>
 </tr>
 <tr>
 <td align="center">plan_dt<br>0.04 / 0.05 ms</td>
 <td align="center">plan_dt<br>4.75 / 8.97 ms</td>
 <td align="center">plan_dt<br>464 / 521 ms ⚠️</td>
+<td align="center">plan_dt<br>21.31 / 22.31 ms</td>
 <td align="center">plan_dt<br>29.99 / 64.27 ms</td>
 <td align="center">plan_dt<br>52.16 / 56.96 ms</td>
 </tr>
@@ -196,6 +201,15 @@ move the drone past obstacles before they cross. MPC at the Pareto
 config (`n_samples=16, horizon=20`) is the only planner with explicit
 motion prediction and clears every episode.
 
+**CHOMP slots in the middle (53.3 %) and is the cheapest non-trivial
+planner of the lot — 21.3 ms ± 0.12, p95 22.3 ms — beating both RRT and
+MPC on per-replan compute**. The smoothness term keeps trajectories
+short and tight (47.6 ± 8.2 m vs RRT's typical zigzag) but local
+optimisation cannot tunnel through obstacles the straight-line init
+crosses, capping success below RRT's continuous-space sampling. Pair
+it with an RRT-init mode and the picture might invert — see the
+roadmap for that follow-up.
+
 **Counter-intuitively, RRT\* loses to plain RRT here.** Asymptotic
 optimality costs ~15× the per-replan compute (464 ms mean vs 30 ms),
 which is 2.3× the 200 ms replan period — every replan arrives late, so
@@ -204,8 +218,8 @@ beat freshness in a dynamic scenario unless the optimization fits the
 replan budget. Same Pareto-saturation trap the 2D MPC re-validation
 saga uncovered, just on the search side.
 
-> Reproduce: `uav-nav run examples/exp_compare_{straight,astar,rrt,rrt_star,mpc}.yaml`,
-> then `uav-nav compare results/cmp_straight results/cmp_astar results/cmp_rrt results/cmp_rrt_star results/cmp_mpc`.
+> Reproduce: `uav-nav run examples/exp_compare_{straight,astar,rrt,rrt_star,chomp,mpc}.yaml`,
+> then `uav-nav compare results/cmp_straight results/cmp_astar results/cmp_rrt_star results/cmp_chomp results/cmp_rrt results/cmp_mpc`.
 
 ### 👁️ Sensor FOV ablation: omni-LiDAR vs forward depth camera
 
@@ -255,8 +269,9 @@ takeaways) live in [`docs/findings.md`](docs/findings.md):
   + a CLI smoke job.
 - **6 sensor backends** (`perfect`, `delayed`, `kalman_delayed`, `lidar`, `pointcloud_occupancy`, `depth_image_occupancy`),
   **3 predictor backends** (`constant_velocity`, `noisy_velocity`,
-  `kalman_velocity`), **5 planners** (`astar`, `straight`, `mpc`, `rrt`, `rrt_star`),
-  **3 scenarios** (`grid_world`, `voxel_world`, `multi_drone_grid`).
+  `kalman_velocity`), **6 planners** (`astar`, `straight`, `mpc`, `rrt`,
+  `rrt_star`, `chomp`), **3 scenarios** (`grid_world`, `voxel_world`,
+  `multi_drone_grid`).
 - All ablation results are reproducible from the example YAMLs by
   copy-pasting one `uav-nav sweep ...` line.
 
@@ -300,19 +315,19 @@ External backends:
   backends without a code change. Optional `cameras: [topic, …]`
   subscribes to `sensor_msgs/Image` and PNG-encodes each frame to
   `state.extra["camera_images"][topic]`, feeding the same
-  `output.save_camera_frames` + `uav-nav video` pipeline.
+  `output.save_camera_frames` + `uav-nav video` pipeline. Set
+  `use_sim_time: true` (with optional `clock_topic` / `sim_time_wall_timeout`)
+  to anchor `state.t` on `/clock` instead of wall-clock — PX4-SITL
+  fast-forward and Gazebo `--lockstep` then speed up the experiment by
+  the same factor as the sim, with the wall-clock timeout protecting
+  the runner from a paused or crashed sim.
 
 ## 🗺️ Roadmap
 
 - 3D perception-latency re-validation in `voxel_world` (Pareto already
   validated — see [docs/findings.md](docs/findings.md)).
-- Wind / disturbance model in `dummy_*` simulators.
-- CHOMP / trajectory-optimisation planners on top of the existing
-  RRT / RRT* sampling backends.
-- ROS 2 bridge sim-time: respect `/clock` and `use_sim_time` so
-  PX4-SITL fast-forward stays decoupled from the runner's wall-clock
-  loop (current bridge ticks `rclpy.spin_once` with wall-clock
-  timeouts, fine for real-time but not for fast-forward).
+- 3D AirSim demo run + GIF in the README hero (the bridge is wired but
+  the README still shows the dummy-3D animation).
 
 ## 📄 License
 

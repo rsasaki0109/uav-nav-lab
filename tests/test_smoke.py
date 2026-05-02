@@ -606,7 +606,9 @@ def test_airsim_camera_to_video_end_to_end_via_mocks(tmp_path: Path) -> None:
         # bridge→recorder→writer without becoming flaky on fast machines.
         class FakeKin:
             class _V:
-                x_val = 0.0; y_val = 0.0; z_val = 0.0
+                x_val = 0.0
+                y_val = 0.0
+                z_val = 0.0
             position = _V()
             linear_velocity = _V()
 
@@ -917,8 +919,13 @@ def test_airsim_bridge_polls_depth_cameras_and_stashes_float_depth_via_mock_clie
     )
 
     class _ImgType:
-        Scene = 0; DepthVis = 3; DepthPerspective = 2; DepthPlanar = 1
-        Segmentation = 5; SurfaceNormals = 6; Infrared = 7
+        Scene = 0
+        DepthVis = 3
+        DepthPerspective = 2
+        DepthPlanar = 1
+        Segmentation = 5
+        SurfaceNormals = 6
+        Infrared = 7
     class _ImgReq:
         def __init__(self, camera_name, image_type, pixels_as_float, compress):  # noqa: ARG002
             self.camera_name = camera_name
@@ -941,8 +948,12 @@ def test_airsim_bridge_polls_depth_cameras_and_stashes_float_depth_via_mock_clie
         captured: list[list[Any]] = []  # noqa: F821
 
         class FakeKin:
-            class _V: x_val = 0.0; y_val = 0.0; z_val = 0.0
-            position = _V(); linear_velocity = _V()
+            class _V:
+                x_val = 0.0
+                y_val = 0.0
+                z_val = 0.0
+            position = _V()
+            linear_velocity = _V()
 
         class FakeClient:
             def confirmConnection(self): pass
@@ -1261,6 +1272,142 @@ def test_ros2_bridge_omits_extras_when_lidars_cameras_not_configured() -> None:
     assert "camera_images" not in out_state.extra
 
 
+def test_ros2_bridge_sim_time_advances_state_t_via_clock_not_wall() -> None:
+    """When `use_sim_time: true`, Ros2Bridge.step() should advance
+    `state.t` based on the adapter's `wait_for_sim_time_advance` return
+    value rather than the wall-clock dt. Confirms the bridge prefers
+    the sim's `/clock` over its own wall-clock counter — the load-bearing
+    behaviour for PX4-SITL fast-forward."""
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+    from uav_nav_lab.sim.ros2_bridge import Ros2Bridge
+
+    grid_cls = SCENARIO_REGISTRY.get("grid_world")
+    sc = grid_cls.from_config(
+        {"size": [10, 10], "start": [1.0, 1.0], "goal": [9.0, 9.0], "obstacles": {"type": "none"}}
+    )
+
+    class FakeSimTimeAdapter:
+        """Mock adapter whose sim clock is driven by the bridge's wait
+        calls rather than by wall-clock — `wait_for_sim_time_advance`
+        instantly jumps the clock to the requested target. Lets us check
+        the bridge wired sim-time through end-to-end without sleeping."""
+        def __init__(self) -> None:
+            self._sim_t = 0.0
+            self.wait_targets: list[float] = []
+            self.wait_timeouts: list[float] = []
+            # Intentionally no `tick` method on this adapter so the test
+            # would fail loudly if the bridge fell back to wall-clock.
+
+        def publish_velocity(self, *_args): pass
+        def latest_pose_velocity(self):
+            return (np.zeros(3), np.zeros(3))
+        def latest_collision(self): return False
+        def teleport(self, _p): pass
+        def latest_sim_time(self): return self._sim_t
+
+        def wait_for_sim_time_advance(self, *, target_time, wall_timeout):
+            self.wait_targets.append(float(target_time))
+            self.wait_timeouts.append(float(wall_timeout))
+            # Simulate the sim's clock jumping forward to the target.
+            self._sim_t = float(target_time)
+            return self._sim_t
+
+        # reset() still needs to spin once for the first odom — provide
+        # tick() but assert it's only called from reset(), never from step().
+        def tick(self, _t): pass
+
+    fake = FakeSimTimeAdapter()
+    bridge = Ros2Bridge(
+        dt=0.05, scenario=sc, adapter=fake,
+        use_sim_time=True, sim_time_wall_timeout=2.0,
+    )
+    bridge.reset()
+    out_state_a, _ = bridge.step(np.array([0.0, 0.0]))
+    out_state_b, _ = bridge.step(np.array([0.0, 0.0]))
+    # state.t tracks sim-time, not the wall-clock the test ran at.
+    assert out_state_a.t == pytest.approx(0.05)
+    assert out_state_b.t == pytest.approx(0.10)
+    # Targets re-anchor on the previously-observed clock value, not on
+    # accumulated dt — protects against drift over a long episode.
+    assert fake.wait_targets == [pytest.approx(0.05), pytest.approx(0.10)]
+    # The configured wall-clock safety timeout reaches the adapter.
+    assert all(t == pytest.approx(2.0) for t in fake.wait_timeouts)
+
+
+def test_ros2_bridge_sim_time_falls_back_to_wall_clock_for_legacy_adapters() -> None:
+    """A user-supplied mock adapter that doesn't implement
+    `wait_for_sim_time_advance` should keep working — bridge should
+    silently fall back to wall-clock `tick()` rather than crashing.
+    Lets users opt into use_sim_time without re-writing existing
+    test fakes."""
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+    from uav_nav_lab.sim.ros2_bridge import Ros2Bridge
+
+    grid_cls = SCENARIO_REGISTRY.get("grid_world")
+    sc = grid_cls.from_config(
+        {"size": [10, 10], "start": [1.0, 1.0], "goal": [9.0, 9.0], "obstacles": {"type": "none"}}
+    )
+
+    class WallClockOnlyAdapter:
+        # Note absence of wait_for_sim_time_advance / latest_sim_time.
+        def __init__(self) -> None:
+            self.tick_calls = 0
+        def publish_velocity(self, *_args): pass
+        def latest_pose_velocity(self):
+            return (np.zeros(3), np.zeros(3))
+        def latest_collision(self): return False
+        def teleport(self, _p): pass
+        def tick(self, _t): self.tick_calls += 1
+
+    fake = WallClockOnlyAdapter()
+    bridge = Ros2Bridge(dt=0.1, scenario=sc, adapter=fake, use_sim_time=True)
+    bridge.reset()
+    out, _ = bridge.step(np.array([0.0, 0.0]))
+    # tick() was called twice (once in reset, once in step's wall fallback).
+    assert fake.tick_calls == 2
+    # Wall-clock fallback advances state.t by the configured dt.
+    assert out.t == pytest.approx(0.1)
+
+
+def test_ros2_bridge_sim_time_disabled_uses_wall_clock_dt() -> None:
+    """Default mode (`use_sim_time=False`) must keep the original
+    behaviour — `state.t` advances by `dt` regardless of any sim-time
+    methods on the adapter. Regression guard against accidentally
+    routing default runs through the sim-time path."""
+    from uav_nav_lab.scenario import SCENARIO_REGISTRY
+    from uav_nav_lab.sim.ros2_bridge import Ros2Bridge
+
+    grid_cls = SCENARIO_REGISTRY.get("grid_world")
+    sc = grid_cls.from_config(
+        {"size": [10, 10], "start": [1.0, 1.0], "goal": [9.0, 9.0], "obstacles": {"type": "none"}}
+    )
+
+    class AmbiguousAdapter:
+        # Implements *both* tick and the sim-time methods; the bridge
+        # should still pick wall-clock when use_sim_time is off.
+        def __init__(self) -> None:
+            self.wait_calls = 0
+            self.tick_calls = 0
+        def publish_velocity(self, *_args): pass
+        def latest_pose_velocity(self):
+            return (np.zeros(3), np.zeros(3))
+        def latest_collision(self): return False
+        def teleport(self, _p): pass
+        def tick(self, _t): self.tick_calls += 1
+        def latest_sim_time(self): return 999.0
+        def wait_for_sim_time_advance(self, **_kw):
+            self.wait_calls += 1
+            return 999.0
+
+    fake = AmbiguousAdapter()
+    bridge = Ros2Bridge(dt=0.05, scenario=sc, adapter=fake)  # use_sim_time defaults False
+    bridge.reset()
+    out, _ = bridge.step(np.array([0.0, 0.0]))
+    assert fake.wait_calls == 0  # sim-time path NEVER taken
+    assert fake.tick_calls == 2  # one in reset, one in step
+    assert out.t == pytest.approx(0.05)
+
+
 def test_rrt_star_returns_shorter_path_than_rrt_on_open_world() -> None:
     """RRT* rewiring should produce a path no longer than plain RRT on
     average. We compare on a wide-open world where rewiring has clear
@@ -1321,6 +1468,105 @@ def test_rrt_planner_finds_path_around_a_wall() -> None:
     # last waypoint must land within goal_tolerance of the goal
     last = plan.waypoints[-1]
     assert float(np.linalg.norm(last - np.array([18.0, 10.0]))) <= 1.5
+
+
+def test_chomp_open_world_returns_essentially_straight_line() -> None:
+    """With no obstacles the smoothness term dominates and CHOMP should
+    converge to the straight-line trajectory (zero second-difference).
+    Endpoints stay pinned at start / goal exactly."""
+    from uav_nav_lab.planner import PLANNER_REGISTRY
+
+    chomp = PLANNER_REGISTRY.get("chomp").from_config(
+        {"n_waypoints": 20, "n_iters": 50}
+    )
+    occ = np.zeros((20, 20), dtype=bool)
+    plan = chomp.plan(np.array([1.0, 1.0]), np.array([18.0, 18.0]), occ)
+    assert plan.meta["status"] == "ok"
+    # Endpoints clamped to start / goal exactly.
+    assert np.allclose(plan.waypoints[0], [1.0, 1.0])
+    assert np.allclose(plan.waypoints[-1], [18.0, 18.0])
+    # Straight line ⇒ second differences ≈ 0.
+    assert float(np.linalg.norm(np.diff(plan.waypoints, n=2, axis=0))) < 1e-6
+
+
+def test_chomp_routes_around_a_horizontal_bar() -> None:
+    """A straight-line init from (2, 8) to (18, 12) crosses a horizontal
+    bar at y=10 (x ∈ [5, 14]). CHOMP's local optimisation should detour
+    *under* the bar (lower y) and report `status=ok`. Asymmetric start /
+    goal y-coordinates break the symmetry that traps the box test."""
+    from uav_nav_lab.planner import PLANNER_REGISTRY
+
+    chomp = PLANNER_REGISTRY.get("chomp").from_config(
+        {"n_waypoints": 30, "n_iters": 100}
+    )
+    occ = np.zeros((20, 20), dtype=bool)
+    occ[5:15, 10] = True
+    plan = chomp.plan(np.array([2.0, 8.0]), np.array([18.0, 12.0]), occ)
+    assert plan.meta["status"] == "ok"
+    # No waypoint inside the raw obstacle.
+    cells = np.clip(np.round(plan.waypoints).astype(int), 0, 19)
+    assert int(occ[tuple(cells.T)].sum()) == 0
+    # The detour reaches y ≤ 9 — actually goes below the bar.
+    assert float(plan.waypoints[:, 1].min()) <= 9.0
+
+
+def test_chomp_reports_local_minimum_when_init_cannot_escape() -> None:
+    """Symmetric box: start (2, 15), goal (28, 15), box at x∈[10,19],
+    y∈[10,19]. The straight-line init is symmetric across y=15 so the
+    obstacle gradient cancels in the y-axis — CHOMP cannot decide to go
+    up or down. The planner should detect this and return
+    `status=local_minimum`, not silently produce a colliding plan."""
+    from uav_nav_lab.planner import PLANNER_REGISTRY
+
+    chomp = PLANNER_REGISTRY.get("chomp").from_config(
+        {"n_waypoints": 30, "n_iters": 100}
+    )
+    occ = np.zeros((30, 30), dtype=bool)
+    occ[10:20, 10:20] = True
+    plan = chomp.plan(np.array([2.0, 15.0]), np.array([28.0, 15.0]), occ)
+    assert plan.meta["status"] == "local_minimum"
+
+
+def test_chomp_smoothness_hessian_inverse_keeps_step_stable_at_n50() -> None:
+    """Plain GD on K diverges around n≈20 because λ_max(K) ≳ 16. The
+    M⁻¹-preconditioned step should stay bounded for n=50 + 200 iters with
+    a high obstacle weight. Regression guard against re-introducing the
+    `K @ x` raw-gradient bug."""
+    from uav_nav_lab.planner import PLANNER_REGISTRY
+
+    chomp = PLANNER_REGISTRY.get("chomp").from_config(
+        {"n_waypoints": 50, "n_iters": 200, "w_obs": 10.0}
+    )
+    occ = np.zeros((30, 30), dtype=bool)
+    occ[14, 14] = True  # single-cell obstacle near the path
+    plan = chomp.plan(np.array([2.0, 14.0]), np.array([28.0, 14.0]), occ)
+    # No waypoint blew outside a generous box around the world.
+    assert float(np.abs(plan.waypoints).max()) < 100.0
+    # And no NaN / Inf.
+    assert np.all(np.isfinite(plan.waypoints))
+
+
+def test_chomp_registry_and_from_config_round_trip() -> None:
+    """Registration + from_config wiring smoke test."""
+    from uav_nav_lab.planner import PLANNER_REGISTRY
+
+    cls = PLANNER_REGISTRY.get("chomp")
+    chomp = cls.from_config(
+        {
+            "max_speed": 7.0,
+            "n_waypoints": 25,
+            "n_iters": 10,
+            "learning_rate": 0.1,
+            "w_obs": 3.0,
+            "epsilon": 1.5,
+            "resolution": 0.5,
+            "inflate": 1,
+        }
+    )
+    assert chomp.max_speed == 7.0
+    assert chomp.n_waypoints == 25
+    assert chomp.n_iters == 10
+    assert chomp.epsilon == 1.5
 
 
 def test_voxel_world_dynamic_obstacles_advance_and_collide() -> None:
@@ -2028,3 +2274,24 @@ def test_multi_drone_viz_groups_drones_per_episode(tmp_path: Path) -> None:
     assert len(saved) == 2
     for p in saved:
         assert p.exists() and p.stat().st_size > 0
+
+
+def test_multi_drone_anim_groups_drones_per_episode(tmp_path: Path) -> None:
+    """`uav-nav anim` on a multi-drone run dispatches to the multi-drone
+    animator: one GIF per episode (not per drone), all N drone trajectories
+    rendered together with a per-drone palette colour. Mirrors the
+    `viz_run` test for parity."""
+    pytest.importorskip("matplotlib")
+    pytest.importorskip("PIL")
+    from uav_nav_lab.anim import viz_anim
+
+    cfg = ExperimentConfig.from_yaml(EXAMPLES / "exp_multi_drone.yaml")
+    cfg.num_episodes = 1
+    cfg.simulator["max_steps"] = 100   # very short — keep test fast
+    run_dir = run_experiment(cfg, tmp_path / "multi_anim")
+    saved = viz_anim(run_dir, fps=10)
+    # one GIF per episode (not per drone)
+    assert len(saved) == 1
+    p = saved[0]
+    assert p.suffix == ".gif"
+    assert p.stat().st_size > 1000  # non-empty animation
