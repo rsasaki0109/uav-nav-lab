@@ -35,6 +35,12 @@ every example YAML carries its own validated finding.**
 <tr>
 <td colspan="2" align="center"><i>AirSim — same Pareto-MPC + <code>airsim_bridge</code>, but the planner's map is empty: a 16-channel AirSim LiDAR (<code>pointcloud_occupancy</code> sensor) builds the occupancy grid online and the drone weaves between Blocks cube clusters.</i></td>
 </tr>
+<tr>
+<td colspan="2"><img src="docs/images/demo_airsim_multi.gif" alt="4 SimpleFlight multirotors crossing through Microsoft AirSim's Blocks Unreal Engine env under the framework's multi_drone_voxel scenario + airsim_bridge: east/west/north/south corridors all reach their opposite goals via CV peer prediction, with staggered altitudes to keep the four flight paths clear." width="560"></td>
+</tr>
+<tr>
+<td colspan="2" align="center"><i>AirSim multi-drone — 4 SimpleFlight quadrotors cross under <code>multi_drone_voxel</code> + the same MPC + CV peer prediction stack, driven via 4 <code>airsim_bridge</code> instances bound to <code>Drone1..Drone4</code>.</i></td>
+</tr>
 </table>
 
 </div>
@@ -305,7 +311,15 @@ External backends:
   payload at `state.extra["depth_images"][name]` — pair with
   `depth_image_occupancy` to project pixels into the planner's
   occupancy grid (the depth-camera analogue of the
-  `pointcloud_occupancy` LiDAR path).
+  `pointcloud_occupancy` LiDAR path). Multi-drone is supported via
+  `simulator.vehicles: [Drone1, Drone2, …]` paired with the
+  `multi_drone_voxel` scenario; each drone gets its own
+  `airsim_bridge`, but only one bridge per global tick advances
+  AirSim's shared physics clock (the others queue
+  `moveByVelocityAsync` while paused), with mastership handed off when
+  the lead drone finishes — see `examples/exp_airsim_multi_demo.yaml`
+  + `scripts/record_airsim_multi_demo.py` for the 4-drone crossing
+  demo.
 - **ROS 2** (`uav_nav_lab/sim/ros2_bridge.py`) is wired end-to-end —
   publishes `geometry_msgs/Twist` on `/cmd_vel`, subscribes to
   `nav_msgs/Odometry` on `/odom` (and optional `std_msgs/Bool` on
