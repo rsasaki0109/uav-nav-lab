@@ -50,6 +50,18 @@ def _build_multi(cfg: ExperimentConfig) -> tuple[Any, list[Any], list[Planner], 
     sensor_cfg.setdefault("dt", cfg.simulator.get("dt", 0.05))
     sensor_cls = SENSOR_REGISTRY.get(sensor_cfg.get("type", "perfect"))
 
+    # Per-drone vehicle names — only the airsim bridge cares about
+    # this. When `simulator.vehicles: [Drone1, Drone2, ...]` is
+    # provided, bridge i is bound to vehicles[i]; otherwise every
+    # backend uses whatever default the config carries (`vehicle:
+    # Drone1` for airsim, ignored for dummy / ros2). Length must
+    # match `scenario.n_drones`.
+    vehicles_cfg = list(cfg.simulator.get("vehicles", []))
+    if vehicles_cfg and len(vehicles_cfg) != n:
+        raise ValueError(
+            f"simulator.vehicles has {len(vehicles_cfg)} entries but the "
+            f"scenario has {n} drones"
+        )
     sims: list[Any] = []
     planners: list[Planner] = []
     sensors: list[Any] = []
@@ -58,6 +70,8 @@ def _build_multi(cfg: ExperimentConfig) -> tuple[Any, list[Any], list[Planner], 
         sim = sim_cls.from_config(cfg.simulator, scenario)
         if i > 0 and hasattr(sim, "_advance_scenario"):
             sim._advance_scenario = False
+        if vehicles_cfg and hasattr(sim, "vehicle"):
+            sim.vehicle = vehicles_cfg[i]
         sim.set_goal(scenario.drones[i].goal)
         sims.append(sim)
         planners.append(planner_cls.from_config(cfg.planner))
@@ -115,10 +129,17 @@ def run_episode_multi(
     replan_period: float,
     max_steps: int,
     episode_index: int,
+    frame_dirs: list[Path | None] | None = None,
 ) -> list[EpisodeRecorder]:
     n = len(sims)
     radii = [d.radius for d in scenario.drones]
-    drone_radius = float(getattr(sims[0].p, "drone_radius", 0.4))
+    # `dummy_*` carries the drone radius on `.p.drone_radius`; airsim
+    # uses scenario.drones[0].radius. Fall back through both, then to
+    # 0.4 m as the framework default for peer-collision math.
+    drone_radius = float(
+        getattr(getattr(sims[0], "p", None), "drone_radius", None)
+        or (radii[0] if radii else 0.4)
+    )
 
     # Reset all drones; only sim 0 reseeds the scenario (so the static layout
     # is reproducible and consistent across all drones in this episode).
@@ -200,6 +221,16 @@ def run_episode_multi(
                 info={"collision": info.collision, "goal_reached": info.goal_reached},
                 sim_extra=dict(ns.extra) if ns.extra else None,
             )
+            # Per-drone PNG capture, mirroring the single-drone runner.
+            # `frame_dirs[i]` is None for drones whose simulator doesn't
+            # surface camera_images this step.
+            if frame_dirs is not None and frame_dirs[i] is not None and ns.extra:
+                cam_imgs = ns.extra.get("camera_images") or {}
+                for cam_name, png_bytes in cam_imgs.items():
+                    if not png_bytes:
+                        continue
+                    fname = f"step_{step:04d}_{cam_name}.png"
+                    (frame_dirs[i] / fname).write_bytes(bytes(png_bytes))
 
         # 3. peer-vs-peer collision check on the freshly stepped positions
         peer_hit = _check_peer_collision(new_states, radii, drone_radius)
@@ -220,8 +251,34 @@ def run_episode_multi(
                 final_states[i] = new_states[i]
                 continue
 
+        # 5. master hand-off. Backends with a shared physics clock
+        # (airsim) elect one bridge to advance time via
+        # `_advance_scenario`; once that bridge finishes, the runner
+        # stops calling its step() — and the clock freezes for everyone
+        # else. Hand mastership to the next unfinished drone so the
+        # remaining drones can keep flying.
+        master_idx = next(
+            (i for i in range(n)
+             if getattr(sims[i], "_advance_scenario", False)),
+            None,
+        )
+        if master_idx is not None and finished[master_idx]:
+            sims[master_idx]._advance_scenario = False
+            for i in range(n):
+                if not finished[i] and hasattr(sims[i], "_advance_scenario"):
+                    sims[i]._advance_scenario = True
+                    break
+
         states = new_states
-        t = states[0].t  # all unfrozen sims share the same dt
+        # Use any unfinished drone's t to advance the global clock; if
+        # the master finished this tick its `states[master].t` is frozen
+        # at the final t and would stall the loop.
+        live_t = next(
+            (states[i].t for i in range(n) if not finished[i]),
+            None,
+        )
+        if live_t is not None:
+            t = live_t
         if all(finished):
             break
 
@@ -245,15 +302,28 @@ def run_experiment_multi(cfg: ExperimentConfig, output_dir: Path) -> Path:
     replan_period = float(cfg.planner.get("replan_period", 0.5))
     max_steps = int(cfg.simulator.get("max_steps", 2000))
 
+    save_frames = bool((cfg.output or {}).get("save_camera_frames", False))
+
     print(f"[run] {cfg.name}: {cfg.num_episodes} episode(s), {n} drone(s) → {output_dir}")
     for ep in range(cfg.num_episodes):
         seed = cfg.seed + ep
+        # Per-drone frame directory; only created when save_camera_frames
+        # is on, otherwise the runner skips PNG writes entirely.
+        frame_dirs: list[Path | None] = []
+        for i in range(n):
+            if save_frames:
+                fd = output_dir / f"frames_{ep:03d}_drone_{i:02d}"
+                fd.mkdir(parents=True, exist_ok=True)
+                frame_dirs.append(fd)
+            else:
+                frame_dirs.append(None)
         recs = run_episode_multi(
             scenario, sims, planners, sensors,
             seed=seed,
             replan_period=replan_period,
             max_steps=max_steps,
             episode_index=ep,
+            frame_dirs=frame_dirs,
         )
         outcomes = [r.outcome for r in recs]
         for i, rec in enumerate(recs):

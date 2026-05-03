@@ -159,6 +159,13 @@ class AirSimBridge(SimInterface):
         self._client: Any = client
         self._state: SimState | None = None
         self._step_count = 0
+        # Multi-drone runner sets this to False on every bridge except
+        # sim 0. AirSim has a single shared physics clock — only one
+        # bridge per global tick should call simContinueForTime, or the
+        # world advances N×dt instead of dt. Sim 0 owns the time
+        # advance; sims 1..N-1 just queue moveByVelocityAsync (which
+        # AirSim holds while paused) and read kinematics post-tick.
+        self._advance_scenario: bool = True
 
     @classmethod
     def from_config(cls, cfg: Mapping[str, Any], scenario: Any) -> "AirSimBridge":
@@ -265,13 +272,19 @@ class AirSimBridge(SimInterface):
         client = self._ensure_client()
         if seed is not None:
             self.scenario.reseed(seed)
-        client.reset()
-        # Let the world settle after reset() before issuing API calls.
-        # Without this, AirSim sometimes carries a transient collision
-        # flag from the just-cleared state into the first step().
-        if hasattr(client, "simPause"):
-            import time as _time
-            _time.sleep(self.settle_after_reset)
+        # `client.reset()` is global in AirSim — it wipes every vehicle.
+        # In multi-drone runs only the master bridge (sim 0) should
+        # call it; the passive sims would otherwise clobber sim 0's
+        # already-teleported drone every time they reset themselves.
+        if self._advance_scenario:
+            client.reset()
+            # Let the world settle after reset() before issuing API
+            # calls. Without this, AirSim sometimes carries a transient
+            # collision flag from the just-cleared state into the
+            # first step().
+            if hasattr(client, "simPause"):
+                import time as _time
+                _time.sleep(self.settle_after_reset)
         client.enableApiControl(True, self.vehicle)
         client.armDisarm(True, self.vehicle)
         if initial_position is not None:
@@ -322,7 +335,11 @@ class AirSimBridge(SimInterface):
         # experiment runner's wall-clock-independent loop work against a
         # real-time engine. simPause + simContinueForTime exists in AirSim
         # >= 1.4; older versions need a manual moveByVelocity timeout.
-        if hasattr(client, "simPause"):
+        # In multi-drone runs, only the master bridge (`_advance_scenario
+        # = True`) handles pause / continue; passive bridges just queue
+        # their moveByVelocity (AirSim holds it through the pause window)
+        # and read post-tick kinematics — see the runner/multi.py comment.
+        if self._advance_scenario and hasattr(client, "simPause"):
             client.simPause(False)
         future = client.moveByVelocityAsync(
             float(v_ned[0]),
@@ -331,12 +348,13 @@ class AirSimBridge(SimInterface):
             self.dt,
             vehicle_name=self.vehicle,
         )
-        if hasattr(client, "simContinueForTime"):
-            client.simContinueForTime(self.dt)
-        else:  # pragma: no cover
-            future.join()
-        if hasattr(client, "simPause"):
-            client.simPause(True)
+        if self._advance_scenario:
+            if hasattr(client, "simContinueForTime"):
+                client.simContinueForTime(self.dt)
+            else:  # pragma: no cover
+                future.join()
+            if hasattr(client, "simPause"):
+                client.simPause(True)
         # Read kinematics back, NED → ENU.
         kin = client.getMultirotorState(vehicle_name=self.vehicle).kinematics_estimated
         pos_ned = np.array([kin.position.x_val, kin.position.y_val, kin.position.z_val])
@@ -417,7 +435,13 @@ class AirSimBridge(SimInterface):
 
     @property
     def goal(self) -> np.ndarray:
+        if getattr(self, "_goal_override", None) is not None:
+            return np.asarray(self._goal_override, dtype=float)
         return np.asarray(self.scenario.goal, dtype=float)
+
+    def set_goal(self, goal: np.ndarray) -> None:
+        """Override the goal used by the goal-reached check (multi-drone)."""
+        self._goal_override = np.asarray(goal, dtype=float).reshape(self.scenario.ndim)
 
     @property
     def obstacle_map(self) -> Any:

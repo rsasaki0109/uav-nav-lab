@@ -1,0 +1,91 @@
+# AirSim multi-drone demo: 4 drones cross-crossing through Microsoft
+# AirSim's Blocks Unreal Engine env, driven by the framework's
+# `multi_drone_voxel` scenario + `airsim_bridge`. Same coordination
+# story as PR #43 (CV peer prediction), now in real quadrotor physics.
+#
+# Setup:
+#   pip install airsim                                          # client
+#   ./AirSim/Blocks/LinuxNoEditor/Blocks.sh -RenderOffscreen \
+#       -ResX=720 -ResY=405                                     # server
+#   (settings.json must declare Drone1..Drone4 + a front_center
+#    camera on Drone1 — see scripts/record_airsim_multi_demo.py)
+#
+# Run + render:
+#   python3 scripts/record_airsim_multi_demo.py
+#
+# Coord frames (60×60×40 voxel grid; AirSim spawn at world ENU origin):
+#   Drone1 (east):  start (5,30,30) ENU → goal (55,30,30) ENU
+#   Drone2 (west):  start (55,30,30)    → goal (5,30,30)
+#   Drone3 (north): start (30,5,30)     → goal (30,55,30)
+#   Drone4 (south): start (30,55,30)    → goal (30,5,30)
+# All four cross at (30,30,30) — peer prediction is the only thing
+# keeping them from colliding at the centre.
+#
+# At altitude 30 m the Blocks env's tallest cubes are well below, so
+# this isolates *coordination* from *avoidance* — pair with the
+# LiDAR demo (PR #45) for the perception story.
+
+name: airsim_multi_demo
+seed: 42
+num_episodes: 1
+
+scenario:
+  type: multi_drone_voxel
+  size: [60, 60, 40]
+  resolution: 1.0
+  obstacles:
+    type: none
+  # Crossing geometry but **staggered altitudes** so the four flight
+  # corridors don't intersect at one point. AirSim's physics + the
+  # bridge's 1-tick command lag for non-master sims (only sim 0
+  # advances simContinueForTime) make a single-altitude 4-way center
+  # crossing fragile — even with peer prediction the drones converge
+  # within the safety margin. Staggering by ±2 m of altitude keeps
+  # each corridor clear while still showing all four crossings on
+  # camera.
+  drones:
+    - {name: east,  start: [5.0,  30.0, 28.0], goal: [55.0, 30.0, 28.0], radius: 0.4}
+    - {name: west,  start: [55.0, 30.0, 32.0], goal: [5.0,  30.0, 32.0], radius: 0.4}
+    - {name: north, start: [30.0, 5.0,  30.0], goal: [30.0, 55.0, 30.0], radius: 0.4}
+    - {name: south, start: [30.0, 55.0, 26.0], goal: [30.0, 5.0,  26.0], radius: 0.4}
+
+simulator:
+  type: airsim
+  host: 127.0.0.1
+  port: 41451
+  dt: 0.05
+  max_steps: 400
+  goal_radius: 2.5
+  settle_after_reset: 1.0
+  settle_after_teleport: 0.3
+  # Per-drone vehicle names — the runner's _build_multi binds each
+  # bridge to vehicles[i] so the i-th scenario.drones entry flies
+  # the i-th AirSim vehicle. Length must equal scenario drones.
+  vehicles: [Drone1, Drone2, Drone3, Drone4]
+  # Only Drone1's bridge captures cameras (the others surface no
+  # frames). The recording script ffmpegs Drone1's FPV into a GIF.
+  cameras:
+    - {name: "front_center", image_type: scene}
+
+planner:
+  type: mpc
+  max_speed: 4.0
+  replan_period: 0.2
+  horizon: 30
+  dt_plan: 0.05
+  n_samples: 16
+  resolution: 1.0
+  inflate: 0
+  goal_radius: 2.5
+  safety_margin: 0.6
+  use_prediction: true       # CV peer prediction — the load-bearing layer
+  w_goal: 1.0
+  w_obs: 200.0
+  w_smooth: 0.05
+
+sensor:
+  type: perfect
+
+output:
+  dir: results/airsim_multi_demo
+  save_camera_frames: true
