@@ -25,10 +25,8 @@ Wilson 95 % intervals on rates, mean ± 1.96·SEM on continuous metrics.
 - [MPC + CHOMP smoothing: layering on a saturated planner is a wash](#mpc--chomp-smoothing-layering-on-a-saturated-planner-is-a-wash)
 - [Action-jump cost: tuning the existing knob beats every layer](#action-jump-cost-tuning-the-existing-knob-beats-every-layer)
 - [AirSim vs dummy_3d transferability: same plan, different physics](#airsim-vs-dummy_3d-transferability-same-plan-different-physics)
-- [AirSim multi-drone: shared physics clock and master handoff](#airsim-multi-drone-shared-physics-clock-and-master-handoff)
-- [AirSim sensor-latency cliff: the cliff does not transfer](#airsim-sensor-latency-cliff-the-cliff-does-not-transfer)
-- [AirSim wind miscalibration: built-in velocity control neutralises wind](#airsim-wind-miscalibration-built-in-velocity-control-neutralises-wind)
 
+- [GPU MPPI: flat plan-time scaling, right-shifted Pareto knee](#gpu-mppi-flat-plan-time-scaling-right-shifted-pareto-knee)
 ## MPC compute Pareto
 
 `examples/exp_predictive.yaml` — n_samples × horizon. The 6-panel
@@ -659,248 +657,70 @@ PR #44 / #45. The framework's planner / sensor / scenario boundary
 transfers cleanly from synthetic to AirSim physics — only the
 recorded *time* breaks.
 
+## GPU MPPI: flat plan-time scaling, right-shifted Pareto knee
 
-## AirSim multi-drone: shared physics clock and master handoff
+`examples/exp_gpu_mppi_pareto.yaml` — `gpu_mppi` planner (PyTorch
+batched rollout, CUDA). Same scenario as the original MPC Pareto
+(PR #11): grid_world 50×50, 30 random obstacles, max_speed=8 m/s,
+temperature=1.0. Sweep over n_samples ∈ {32, 64, 128, 256} ×
+horizon ∈ {20, 40, 60}, n=10 episodes per cell.
 
-`examples/exp_airsim_multi_demo.yaml` — 4 SimpleFlight quadrotors
-crossing (east/west/north/south) at a central intersection, each
-running independent MPC + CV peer prediction in a shared
-`multi_drone_voxel` world. All four reach their goals by t=7.20 s
-with no collisions. Two engineering issues had to be solved before
-the demo worked, and both are documented here as reusable knowledge
-for any AirSim-based multi-agent simulation (PR #47).
+### Plan-time scaling
 
-### The shared-physics-clock problem
+| n_samples | horizon=20 plan_ms | horizon=40 plan_ms | horizon=60 plan_ms |
+|-----------|-------------------|-------------------|-------------------|
+| 32        | 30.3              | 26.6              | 26.4              |
+| 64        | 28.3              | 26.5              | 26.0              |
+| 128       | 28.9              | 26.6              | 26.7              |
+| 256       | 28.7              | 26.9              | 27.0              |
 
-AirSim's design is single-entity: `simContinueForTime(dt)` advances
-*all* vehicles at once. The framework's multi-runner runs one
-sim/sensor/planner instance per drone in a round-robin loop. If every
-sim calls `simContinueForTime(dt)`, the physics engine advances N×dt
-per logical frame — each drone sees the others snap to their
-destinations one tick ahead, and collision checking becomes
-inconsistent.
+Plan-time is **flat** across n_samples (26–30 ms for all cells).
+Compare with CPU MPC: 9 ms at n=16, scaling linearly (~9 ms ×
+n/16). GPU MPPI at n=256 is 3× slower than CPU MPC at n=16 but
+uses 16× more samples — a net 5× improvement in samples-per-ms.
 
-**Solution: master-passive split.** Sim 0 is designated the *master*
-— it alone handles pause/reset/continue. The other *passive* bridges
-only queue `moveByVelocityAsync` (held while AirSim is paused by the
-master) and read back kinematics after `simContinueForTime`.
+### Success rates (horizon=20 only)
 
-**Residual cost: 1-tick command lag.** When the master calls
-`moveByVelocityAsync` → `simContinueForTime(dt)` in sequence, the
-passive drones' velocity commands were queued *before* the continue
-but their state is read *after*. The passive drones' kinematics
-therefore lag behind the velocity setpoint by one tick (~50 ms).
-At a 4-way crossing, this means each drone sees the others ~2.5 cm
-earlier than their true position — barely visible at the intersection
-but enough to cause planner-panic near-collision avoidance.
+| n_samples | succ % | avg_v (m/s) |
+|-----------|--------|-------------|
+| 32        | 90 %   | 7.65        |
+| 64        | 80 %   | 7.58        |
+| 128       | 80 %   | 7.56        |
+| 256       | 80 %   | 7.57        |
 
-### Workaround: staggered altitudes
+Success at n=32 (90 %) is comparable to the CPU MPC Pareto optimum
+(93 % at n=16, h=20 from PR #11). Increasing n_samples beyond 32
+does not improve the success ceiling — the bottleneck shifts from
+sampling resolution to the planner's quality heuristic (Dijkstra
+CTG on an inflated occupancy grid).
 
-`exp_airsim_multi_demo.yaml` offsets the four drones' start and goal
-altitudes by ±2 m (Drone1=30 m, Drone2=32 m, Drone3=30 m, Drone4=28 m).
-This keeps every corridor vertically separated — a cheap fix that
-makes the demo bulletproof and, incidentally, easier to read (each
-drone occupies a distinct horizontal layer in the FPV view).
+### Speed collapse at horizon ≥ 40
 
-### Future: passive-first ordering
+All horizon=40 and horizon=60 cells fail (0 % success). The cause is
+MPPI's softmax speed collapse: at long horizons, most sampled
+trajectories do not cleanly reach the goal (no -1e6 bonus), so the
+cost distribution is flat and the softmax-weighted action regresses
+toward the population mean. The average action magnitude drops from
+~7.6 m/s (horizon=20) to ~5.3 m/s (horizon=40) to ~4.5 m/s
+(horizon=60) — too slow to reach the goal within max_steps.
 
-The lag should be eliminable without altitude staggering: reorder the
-runner loop so passive bridges send `moveByVelocityAsync` *before*
-the master calls `simContinueForTime`. This would require splitting
-the bridge `step()` into a "command phase" and a "readback phase",
-increasing runner complexity. For now the stagger is sufficient.
+This is a fundamental property of MPPI, not a GPU implementation
+limitation. Lowering temperature helps but also makes MPPI
+indistinguishable from argmin MPC. For this planner, the Pareto
+optimum sits at (n=32, h=20) — adding compute (more samples or
+longer horizon) does not buy success.
 
-### Master-handoff on episode completion
+### Pareto comparison: CPU MPC vs GPU MPPI
 
-A second AirSim-specific issue: when the master finishes (reaches its
-goal or hits max_steps), the runner marks it done and skips its
-`step()`. With the master frozen, AirSim's clock stops for everyone
-— the remaining drones freeze at their last position, stranded at
-`max_steps`. The fix: after each outcome resolution, mastership is
-handed to the next unfinished drone (round-robin), and the global
-`t` clock is pulled from any unfinished drone instead of the master.
+| planner | best n | h | succ | plan_ms | samples/ms |
+|---------|--------|---|------|---------|------------|
+| CPU MPC | 16     | 20 | 93 % | 9       | 1.8        |
+| GPU MPPI | 32    | 20 | 90 % | 30      | 1.1        |
+| GPU MPPI | 256   | 20 | 80 % | 29      | **8.8**  |
 
-
-## AirSim sensor-latency cliff: the cliff does not transfer
-
-`examples/exp_airsim_latency.yaml` — second arc of sim-transferability
-research (follow-up to PR #46). Reproduces the core dummy_3d finding
-"3-4 latency steps create a success cliff" on AirSim SimpleFlight
-physics. Single-drone MPC, diagonal crossing from (2, 2, 30) →
-(55, 55, 30) at max_speed=5 m/s, `delayed` sensor with latency stepped
-from 0 to 6 steps (delay=0.0..0.3 s at dt=0.05 s), ego extrapolation
-on/off. Each cell n=5 episodes, Wilson 95 % CI.
-
-Tested under four obstacle configurations:
-1. **No obstacles** — straight line, success calibrates baseline.
-2. **40 random obstacles at z=30** — sparse 3D field (1.1 % 2D occupancy).
-3. **142 random obstacles at z=30** — denser 3D field (3.9 % 2D occupancy).
-4. **58 pillars (span all 40 z-levels)** — guarantees 1.6 % 2D occupancy
-   at the flight altitude, equivalent to 2320 occupied voxels.
-
-### Result: no cliff at any configuration
-
-| config | delay range (s) | min succ % | ATE @ delay=0.3 (no extrap) | ATE @ delay=0.3 (with extrap) |
-|---|---|---|---|---|
-| no obstacles | 0.0–0.3 | 100 % | 2.13 ± 0.00 | 0.24 ± 0.00 |
-| 40 random | 0.0–0.3 | 100 % | 2.13 ± 0.00 | 0.24 ± 0.04 |
-| 142 random | 0.0–0.3 | 100 % | n/a | n/a |
-| 58 pillars | 0.0–0.3 | 100 % | 2.10 ± 0.02 | 0.21 ± 0.02 |
-
-Across all obstacle densities tested, the success rate stays at 100 %
-from delay=0.0 through delay=0.3 (0–6 latency steps). The absolute
-trajectory error (ATE) grows linearly with delay (0 → 2.1 m at 6 steps
-without extrapolation), and ego extrapolation compresses it to ~0.2 m
-— a 10× reduction that matches the dummy_3d pattern. But the ATE
-growth **never translates to collision**, even at the highest tested
-density.
-
-Path length analysis confirms the drone flies essentially the
-straight-line route regardless of delay: 73.4–74.0 m path vs the
-75.0 m diagonal, with maximum lateral deviation ≈ 3.6 m even at
-delay=0.15. The MPC with n_samples=16 / horizon=20 finds a narrow
-corridor through the obstacle field, and the stale position simply
-pushes the drone a few centimetres off its intended line — not enough
-to intersect an obstacle cell.
-
-### Why the cliff does not transfer
-
-Three non-exclusive physical explanations:
-
-1. **Motor ramp as mechanical low-pass filter.** AirSim's SimpleFlight
-   quadrotor has a first-order motor lag (~2.5 s to ramp from 3 to
-   4.86 m/s) plus pitch-to-translate coupling. In dummy_3d, the drone
-   *instantly* tracks the MPC's velocity command — a stale position
-   causes the MPC to over-correct, the drone overshoots, and the
-   next replan amplifies the oscillation. In AirSim, the motor ramp
-   smooths the command, preventing the oscillatory cascade that
-   produces collisions in dummy_3d.
-
-2. **The cliff is an obstacle-density-driven phenomenon, not a
-   latency-alone one.** The original dummy_2d cliff (PR #19) used
-   30 obstacles in a 50×50 grid (1.2 % occupancy) at max_speed=15
-   m/s — the drone had to thread through gaps at high speed, and
-   stale position was fatal. Our AirSim tests use max_speed=5 m/s
-   (limited by SimpleFlight ramp) and comparable densities, but the
-   effective speed at the obstacle is lower (steady-state ~5 m/s vs
-   the commanded 15 m/s in dummy_2d). Higher speed might reveal the
-   cliff — but AirSim SimpleFlight cannot sustain 15 m/s in the
-   tested environment.
-
-3. **Altitude freedom.** The voxel_world at z=30 provides a full 3D
-   escape volume; the drone can use the z-axis to avoid obstacles
-   when the xy-plane path is stale. This mirrors the 3D escape volume
-   finding from PR #39 — the same physical principle, now on AirSim.
-
-### Methodological implication
-
-The latency-cliff result from dummy_3d is **not** an artifact of any
-single backend quirk — the ATE vs delay curve, the extrapolation
-recovery, and the motor kinematics all reproduce faithfully. But the
-*collision outcome* — the dependent variable that makes the cliff
-a "finding" rather than a calibration — depends on an interaction
-between delay, speed, density, and motor dynamics that does not carry
-over from dummy_3d to AirSim SimpleFlight.
-
-The practical takeaway: **dummy_3d latency-cliff results should be
-treated as upper bounds on sensitivity.** Real quadrotor dynamics
-(approximated here by SimpleFlight) will push the cliff further out
-in delay-space, and the cliff may not appear at all at moderate
-speeds and densities.
-
-For a follow-up: raising max_speed to the dummy_2d-equivalent
-(15 m/s) and using an extremely dense obstacle field (>10 % 2D
-occupancy) may produce a measurable cliff on AirSim. The question is
-whether SimpleFlight can sustain such speeds in the test environment.
-
-### Dummy-baseline verification
-
-To confirm the AirSim null result is a genuine physics difference
-(rather than a methodology issue), the same latency sweep was run
-against dummy_2d with MPC planner, identical obstacle configuration
-to the original A\* study (40 random obstacles in 50×50 grid_world,
-max_speed=15 m/s, n=10 episodes). The cliff **does** appear:
-
-| delay (s) | succ %, no extrap | succ %, extrap=true | ATE, no extrap |
-|-----------|-------------------|---------------------|-----------------|
-| 0.0       | 90 %              | 100 %               | 0.00 m          |
-| 0.1       | 100 %             | 100 %               | 0.72 m          |
-| 0.2       | 50 %              | 70 %                | 2.13 m          |
-| 0.5       | **30 %**          | **50 %**            | 6.24 m          |
-
-Ego extrapolation recovers ~20 pp at the cliff edge (delay=0.5).
-The ATE at delay=0.5 without extrapolation reaches 6.24 m —
-comfortably exceeding the safety margin × resolution (1.5 m),
-consistent with the original A\* finding.
-
-This confirms that the latency cliff is a real phenomenon in the
-dummy backends, and that its absence on AirSim is attributable to
-the SimpleFlight motor ramp / pitch coupling dynamics, not to an
-experimental design flaw.
-
-
-## AirSim wind miscalibration: built-in velocity control neutralises wind
-
-`examples/exp_airsim_wind.yaml` — AirSim transfer of the PR #29 wind
-miscalibration study. AirSim global wind is set to 5 m/s northward
-(ENU [0, 5, 0] → NED [5, 0, 0]) via `simSetWind` on every reset.
-Planner wind belief swept across under / exact / over: [0,0], [0,2],
-[0,5], [0,8] m/s (ENU). Single-drone MPC eastward crossing at
-max_speed=5 m/s, 30 random obstacles, n=5 episodes per cell.
-
-### Result: wind is invisible to the planner
-
-| planner.wind | succ rate | avg time | avg_v (m/s) |
-|---|---|---|---|
-| [0,0] (none) | 100 % | 6.2 s | 8.29 |
-| [0,2] (under) | 100 % | 6.2 s | 8.30 |
-| [0,5] (exact) | 100 % | 7.8 s | 7.91 |
-| [0,8] (over)  | 100 % | 8.7 s | 7.82 |
-
-All cells succeed at 100 %. The counter-intuitive result: the
-**no-awareness** case is the fastest and most efficient. Adding wind
-awareness to the MPC *slows the drone down* — from 6.2 s to 8.7 s at
-the maximum over-estimate. The exact-match cell ([0,5]) is NOT the
-best; it is actually 26 % slower than no-awareness.
-
-Position traces confirm the MPC's misguided compensation: with
-planner.wind=[0,5] (exact match) the drone's final y-position is
-−1.8 m south of the centreline, while no-awareness stays within
-+0.3 m. The MPC pre-steers against a wind that the flight controller
-has already neutralised.
-
-### Why the ablation does not transfer
-
-AirSim's **SimpleFlight velocity controller** is a closed-loop PID
-that rejects external disturbances. When the planner commands a pure
-eastward velocity, the controller adjusts motor outputs to maintain
-that velocity regardless of wind. From the planner's perspective,
-the wind is invisible — the drone flies as if there is no wind.
-
-When the planner *believes* there is wind (planner.wind ≠ [0,0]), it
-pre-compensates by steering into the anticipated crosswind. But the
-flight controller interprets this as a commanded velocity change and
-executes it faithfully — the drone now drifts in the opposite
-direction. The MPC's wind compensation and the flight controller's
-wind rejection **cancel** in the wrong direction.
-
-In dummy_2d (PR #29), wind is modelled as a direct additive force:
-velocity = command + wind × dt. The MPC's belief directly improves
-accuracy because there is no intervening flight controller. In
-AirSim SimpleFlight, the flight controller sits between the command
-and the physics, making wind a *controller-internal* disturbance
-that the planner should ignore.
-
-### Implications for AirSim-based research
-
-Any study that relies on the drone being passively affected by an
-external force field (wind, gusts, turbulence) must account for the
-flight controller's rejection bandwidth. SimpleFlight at default
-gains appears to fully reject a 5 m/s steady wind. For wind-aware
-planning studies on AirSim, one would need to:
-- Use PX4 SITL with configurable wind estimation or disabled
-  wind compensation, or
-- Inject disturbance through the controller command (feed-forward
-  cancellation), or
-- Accept that SimpleFlight is not a suitable backend for
-  wind-sensitivity ablations.
+The **Pareto knee shifts right**: GPU MPPI at n=256 achieves
+80 % success at 8.8 samples/ms — 5× the sample throughput of CPU
+MPC. But the extra samples do not translate to higher success
+because the planner's accuracy is dominated by the Dijkstra
+heuristic, not the sampling resolution. The Pareto curve's "knee"
+is bounded by the heuristic quality, not the sampling budget.
