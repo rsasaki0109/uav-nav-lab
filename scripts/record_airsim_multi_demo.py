@@ -19,7 +19,6 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -32,10 +31,9 @@ def _setup_camera() -> None:
     import airsim  # type: ignore[import-not-found]
     c = airsim.MultirotorClient()
     c.confirmConnection()
-    c.reset()
-    time.sleep(2.0)
-    # Pitch Drone1's front-center camera ~17° down so the other
-    # drones (also at altitude 30 m) stay in frame as they cross.
+    # Don't reset — the experiment runner handles reset + teleport.
+    # Only pitch the camera for a better FPV angle.
+    time.sleep(1.0)
     cam_pose = airsim.Pose(
         airsim.Vector3r(0.50, 0.0, 0.0),
         airsim.to_quaternion(-0.30, 0.0, 0.0),
@@ -56,9 +54,9 @@ def _run_experiment() -> None:
 def _frames_to_gif(
     frames_dir: Path,
     out: Path,
-    fps: int = 12,
-    width: int = 320,
-    target_seconds: float = 5.5,
+    fps: int = 15,
+    width: int = 640,
+    target_seconds: float = 7.0,
 ) -> None:
     if not frames_dir.is_dir():
         raise FileNotFoundError(f"{frames_dir} not found")
@@ -93,18 +91,12 @@ def _frames_to_gif(
 
 
 def main() -> int:
-    print("[1/3] setup AirSim camera")
-    _setup_camera()
-    print("[2/3] run experiment (4 drones)")
+    print("[1/2] run experiment (4 drones)")
     _run_experiment()
-    # Multi runner writes per-drone frames to frames_000_drone_NN/ —
-    # but we only configured cameras on Drone1, so frames_000 has the
-    # frames we want.
     frames_dir = RUN_DIR / "frames_000_drone_00"
     if not frames_dir.is_dir():
-        # fallback for single-drone-style frames dir
         frames_dir = RUN_DIR / "frames_000"
-    print(f"[3/3] frames → GIF (from {frames_dir.name}/)")
+    print(f"[2/2] frames → GIF (from {frames_dir.name}/)")
     _frames_to_gif(frames_dir, GIF_OUT)
     return 0
 
