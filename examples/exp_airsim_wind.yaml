@@ -1,0 +1,50 @@
+# AirSim wind miscalibration ablation — AirSim transfer of PR #29.
+# AirSim wind is set to 5 m/s northward (ENU y=+5, NED x=+5) via
+# simSetWind API in the bridge reset().  Planner wind belief swept
+# across under / exact / over to test whether the dummy_2d finding
+# ("planner belief = sim reality is strongest") transfers to AirSim.
+#
+# Sweep:
+#   uav-nav sweep examples/exp_airsim_wind.yaml \
+#     --param planner.wind=[0,0],[0,2],[0,5],[0,8] \
+#     --param num_episodes=10
+
+name: airsim_wind
+num_episodes: 10
+output: {dir: results/airsim_wind}
+planner:
+  dt_plan: 0.05
+  goal_radius: 2.0
+  horizon: 30
+  inflate: 1
+  max_speed: 5.0
+  n_samples: 16
+  replan_period: 0.1
+  resolution: 1.0
+  safety_margin: 0.5
+  type: mpc
+  use_prediction: false
+  w_goal: 1.0
+  w_obs: 100.0
+  w_smooth: 0.05
+  wind: [0.0, 0.0]
+scenario:
+  goal: [55.0, 30.0, 30.0]
+  obstacles: {count: 30, seed: 7, type: random}
+  resolution: 1.0
+  size: [60, 60, 40]
+  start: [2.0, 30.0, 30.0]
+  type: voxel_world
+seed: 42
+sensor: {type: perfect}
+simulator:
+  dt: 0.05
+  goal_radius: 2.0
+  host: 127.0.0.1
+  max_steps: 1000
+  port: 41451
+  settle_after_reset: 1.0
+  settle_after_teleport: 0.3
+  type: airsim
+  vehicle: Drone1
+  wind: [0.0, 5.0, 0.0]

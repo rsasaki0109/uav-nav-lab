@@ -108,6 +108,7 @@ class AirSimBridge(SimInterface):
         settle_after_reset: float = 0.0,
         settle_after_teleport: float = 0.0,
         client: Any = None,
+        wind: tuple[float, float, float] = (0.0, 0.0, 0.0),
     ) -> None:
         self.dt = float(dt)
         self.scenario = scenario
@@ -116,6 +117,7 @@ class AirSimBridge(SimInterface):
         self.vehicle = vehicle
         self.goal_radius = float(goal_radius)
         self.max_steps = int(max_steps)
+        self.wind = tuple(float(v) for v in wind)
         # Names of LiDAR sensors configured on the AirSim side (in
         # settings.json). Each step we pull `getLidarData(name)` and stash
         # the converted (N, 3) ENU point cloud at
@@ -172,6 +174,11 @@ class AirSimBridge(SimInterface):
         lidars_cfg = cfg.get("lidars", []) or []
         cameras_cfg = cfg.get("cameras", []) or []
         depths_cfg = cfg.get("depths", []) or []
+        # Wind vector in ENU (m/s). Converted to NED and pushed to AirSim
+        # via simSetWind on reset so the physical wind matches the planner's
+        # wind_belief sweep target.  Default (0,0,0) = no wind.
+        wind_raw = cfg.get("wind", ()) or ()
+        wind_tuple = (float(wind_raw[0]), float(wind_raw[1]), float(wind_raw[2])) if len(wind_raw) >= 2 else (0.0, 0.0, 0.0)
         return cls(
             dt=float(cfg.get("dt", 0.05)),
             scenario=scenario,
@@ -185,6 +192,7 @@ class AirSimBridge(SimInterface):
             depths=list(depths_cfg),
             settle_after_reset=float(cfg.get("settle_after_reset", 0.0)),
             settle_after_teleport=float(cfg.get("settle_after_teleport", 0.0)),
+            wind=wind_tuple,
         )
 
     def _ensure_client(self) -> Any:
@@ -278,6 +286,15 @@ class AirSimBridge(SimInterface):
         # already-teleported drone every time they reset themselves.
         if self._advance_scenario:
             client.reset()
+            # Set global wind via API (settings.json Wind not supported
+            # by all AirSim builds).  ENU → NED.
+            try:
+                import airsim  # type: ignore[import-not-found]
+                w = self.wind
+                wind_ned = airsim.Vector3r(float(w[1]), float(w[0]), float(-w[2]) if len(w) > 2 else 0.0)
+                client.simSetWind(wind_ned)
+            except Exception:
+                pass
             # Let the world settle after reset() before issuing API
             # calls. Without this, AirSim sometimes carries a transient
             # collision flag from the just-cleared state into the
@@ -323,25 +340,26 @@ class AirSimBridge(SimInterface):
         self._step_count = 0
         return self._state.copy()
 
-    def step(self, command: np.ndarray) -> tuple[SimState, SimStepInfo]:
+    def step_command(self, command: np.ndarray) -> None:
+        """Queue a velocity command.  If master, also handle
+        simPause(False) → moveByVelocityAsync → simContinueForTime(dt)
+        → simPause(True).  State is NOT read back — call
+        :meth:`step_readback` after *all* bridges have issued their
+        commands so readbacks see the fully-advanced physics tick.
+
+        For multi-drone runs the runner calls this in passive-first
+        order (passive sims queue while paused, then the master
+        unpauses / continues / re-pauses), then calls step_readback
+        on every bridge to pull the fresh kinematics."""
         assert self._state is not None, "call reset() first"
         client = self._ensure_client()
-        # ENU velocity → NED. 2D scenarios pad vz=0.
         v = np.asarray(command, dtype=float)
         v3 = np.zeros(3)
         v3[: min(3, v.size)] = v[:3]
         v_ned = _enu_to_ned(v3)
-        # Pause sim, run command for exactly dt, continue. This makes the
-        # experiment runner's wall-clock-independent loop work against a
-        # real-time engine. simPause + simContinueForTime exists in AirSim
-        # >= 1.4; older versions need a manual moveByVelocity timeout.
-        # In multi-drone runs, only the master bridge (`_advance_scenario
-        # = True`) handles pause / continue; passive bridges just queue
-        # their moveByVelocity (AirSim holds it through the pause window)
-        # and read post-tick kinematics — see the runner/multi.py comment.
         if self._advance_scenario and hasattr(client, "simPause"):
             client.simPause(False)
-        future = client.moveByVelocityAsync(
+        _future = client.moveByVelocityAsync(
             float(v_ned[0]),
             float(v_ned[1]),
             float(v_ned[2]),
@@ -351,11 +369,14 @@ class AirSimBridge(SimInterface):
         if self._advance_scenario:
             if hasattr(client, "simContinueForTime"):
                 client.simContinueForTime(self.dt)
-            else:  # pragma: no cover
-                future.join()
+            elif hasattr(client, "simPause"):  # pragma: no cover
+                client.simPause(True)
             if hasattr(client, "simPause"):
                 client.simPause(True)
-        # Read kinematics back, NED → ENU.
+
+    def step_readback(self) -> tuple[SimState, SimStepInfo]:
+        """Read kinematics, sensors and collision after the physics tick."""
+        client = self._ensure_client()
         kin = client.getMultirotorState(vehicle_name=self.vehicle).kinematics_estimated
         pos_ned = np.array([kin.position.x_val, kin.position.y_val, kin.position.z_val])
         vel_ned = np.array(
@@ -368,10 +389,6 @@ class AirSimBridge(SimInterface):
         self._state.velocity = vel_enu[:ndim]
         self._state.t += self.dt
         self._step_count += 1
-        # Poll any configured LiDAR sensors. We expose raw (N, 3) ENU
-        # point clouds via state.extra["lidar_points"][name]; downstream
-        # rasterization / fusion is the consumer's job — keeps this
-        # bridge from committing to a particular perception architecture.
         if self.lidars:
             self._state.extra["lidar_points"] = {
                 name: _ned_pointcloud_to_enu(
@@ -379,10 +396,6 @@ class AirSimBridge(SimInterface):
                 )
                 for name in self.lidars
             }
-        # Poll any configured cameras. simGetImages takes a list of
-        # ImageRequest (airsim.ImageType + name + raw flag + compress flag).
-        # We always ask for compressed PNG so the bytes can be written to
-        # disk verbatim by the runner / `uav-nav video` pipeline.
         if self.cameras:
             requests = self._build_image_requests()
             responses = client.simGetImages(requests, vehicle_name=self.vehicle)
@@ -390,11 +403,6 @@ class AirSimBridge(SimInterface):
                 spec["name"]: bytes(getattr(resp, "image_data_uint8", b"") or b"")
                 for spec, resp in zip(self.cameras, responses)
             }
-        # Poll any configured depth cameras. These differ from `cameras` in
-        # that we ask AirSim for raw float depth (metres) rather than a
-        # PNG, and we ship per-camera intrinsics alongside so consumers
-        # (depth_image_occupancy) can project pixels to 3D points without
-        # hard-coding any AirSim-specific knowledge.
         if self.depths:
             depth_requests = self._build_depth_requests()
             depth_responses = client.simGetImages(depth_requests, vehicle_name=self.vehicle)
@@ -414,8 +422,6 @@ class AirSimBridge(SimInterface):
                 }
             if depth_bag:
                 self._state.extra["depth_images"] = depth_bag
-        # AirSim's collision flag is the source of truth in physics-simulated
-        # worlds; the scenario's occupancy is only used for planner input.
         collision = bool(client.simGetCollisionInfo(vehicle_name=self.vehicle).has_collided)
         goal = (
             self.scenario.goal
@@ -427,6 +433,10 @@ class AirSimBridge(SimInterface):
         return self._state.copy(), SimStepInfo(
             collision=collision, goal_reached=goal_reached, truncated=truncated
         )
+
+    def step(self, command: np.ndarray) -> tuple[SimState, SimStepInfo]:
+        self.step_command(command)
+        return self.step_readback()
 
     @property
     def state(self) -> SimState:

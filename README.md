@@ -344,12 +344,19 @@ External backends:
 
 ## 🗺️ Roadmap
 
-- 3D perception-latency re-validation in `voxel_world` (Pareto already
-  validated — see [docs/findings.md](docs/findings.md)).
-- ROS 2 bridge sim-time: respect `/clock` and `use_sim_time` so
-  PX4-SITL fast-forward stays decoupled from the runner's wall-clock
-  loop (current bridge ticks `rclpy.spin_once` with wall-clock
-  timeouts, fine for real-time but not for fast-forward).
+- **AirSim transferability — second arc**: reproduce the core dummy_3d
+  research findings (perception-latency cliff, wind miscalibration,
+  multi-drone peer-prediction Δ) on AirSim SimpleFlight physics. First
+  target: sensor-latency cliff with `delayed` sensor → AirSim ablation
+  (`examples/exp_airsim_latency.yaml`).
+- **AirSim multi-drone passive-first ordering**: eliminate the 1-tick
+  command lag in the multi-drone runner by reordering the bridge loop
+  so passive sims send `moveByVelocityAsync` before the master calls
+  `simContinueForTime` (currently worked around with staggered
+  altitudes — see `examples/exp_airsim_multi_demo.yaml`).
+- **GPU MPC / MPPI**: offload sampling rollouts to GPU (`n_samples`
+  128–256) and re-draw the Pareto curve to see how far the knee shifts
+  right (see `examples/exp_predictive.yaml` for baseline).
 
 ## 📄 License
 

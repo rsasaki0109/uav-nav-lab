@@ -1,0 +1,60 @@
+# dummy_3d sensor-latency cliff — small-grid verification.
+# 30×30×2 grid, ~30 obstacles at z=1, diagonal crossing.
+#
+# Sweep:
+#   uav-nav sweep examples/exp_dummy_latency.yaml #     --param sensor.delay=0.0,0.05,0.1,0.15,0.2,0.25,0.3 #     --param sensor.extrapolate=false,true #     --param num_episodes=10
+
+name: dummy_latency
+num_episodes: 10
+output: {dir: results/dummy_latency}
+planner: {dt_plan: 0.05, goal_radius: 1.5, horizon: 20, inflate: 1, max_speed: 5.0,
+  n_samples: 16, replan_period: 0.2, resolution: 1.0, safety_margin: 0.5, type: mpc,
+  use_prediction: false, w_goal: 1.0, w_obs: 100.0, w_smooth: 0.05}
+scenario:
+  goal: [27.0, 27.0, 1.0]
+  obstacles:
+    cells:
+    - [16, 20, 1]
+    - [23, 7, 1]
+    - [3, 4, 1]
+    - [20, 20, 1]
+    - [19, 6, 1]
+    - [4, 15, 1]
+    - [27, 7, 1]
+    - [8, 3, 1]
+    - [14, 22, 1]
+    - [5, 19, 1]
+    - [19, 15, 1]
+    - [16, 13, 1]
+    - [13, 20, 1]
+    - [24, 26, 1]
+    - [12, 6, 1]
+    - [14, 3, 1]
+    - [20, 22, 1]
+    - [5, 9, 1]
+    - [3, 18, 1]
+    - [22, 22, 1]
+    - [19, 5, 1]
+    - [9, 4, 1]
+    - [17, 23, 1]
+    - [24, 4, 1]
+    - [15, 4, 1]
+    - [11, 19, 1]
+    - [20, 3, 1]
+    - [21, 8, 1]
+    - [6, 19, 1]
+    - [9, 3, 1]
+    - [3, 20, 1]
+    - [11, 9, 1]
+    - [5, 20, 1]
+    - [8, 13, 1]
+    - [11, 15, 1]
+    - [26, 12, 1]
+  resolution: 1.0
+  size: [30, 30, 2]
+  start: [2.0, 2.0, 1.0]
+  type: voxel_world
+seed: 42
+sensor: {delay: 0.1, dt: 0.05, extrapolate: false, position_noise_std: 0.0, type: delayed,
+  velocity_window: 1}
+simulator: {dt: 0.05, goal_radius: 1.5, max_accel: 50.0, max_steps: 1500, type: dummy_3d}

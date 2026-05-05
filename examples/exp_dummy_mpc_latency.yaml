@@ -1,0 +1,27 @@
+# dummy_2d MPC latency cliff — verification that the cliff exists for
+# MPC planner on the same obstacle configuration as the original A* study.
+#
+# Sweep:
+#   uav-nav sweep examples/exp_dummy_mpc_latency.yaml \
+#     --param sensor.delay=0.0,0.05,0.1,0.2,0.5 \
+#     --param sensor.extrapolate=false,true \
+#     --param num_episodes=10
+
+name: dummy_mpc_latency
+num_episodes: 10
+output: {dir: results/dummy_mpc_latency}
+planner: {dt_plan: 0.05, goal_radius: 1.5, horizon: 20, inflate: 1, max_speed: 15.0,
+  n_samples: 16, replan_period: 0.1, resolution: 1.0, safety_margin: 0.5, type: mpc,
+  use_prediction: false, w_goal: 1.0, w_obs: 100.0, w_smooth: 0.05}
+scenario:
+  goal: [45.0, 45.0]
+  obstacles: {count: 40, seed: 7, type: random}
+  resolution: 1.0
+  size: [50, 50]
+  start: [2.0, 2.0]
+  type: grid_world
+seed: 42
+sensor: {delay: 0.1, dt: 0.05, extrapolate: false, position_noise_std: 0.0, type: delayed,
+  velocity_window: 1}
+simulator: {drone_radius: 0.4, dt: 0.05, goal_radius: 1.5, max_accel: 80.0, max_steps: 1500,
+  type: dummy_2d}
