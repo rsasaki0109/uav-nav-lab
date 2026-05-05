@@ -1,0 +1,26 @@
+# GPU MPPI Pareto sweep — n_samples × horizon comparison against CPU MPC/MPPI.
+# Same scenario/grid as the original MPC Pareto study (exp_predictive.yaml).
+#
+# Sweep:
+#   uav-nav sweep examples/exp_gpu_mppi_pareto.yaml \
+#     --param planner.n_samples=32,64,128,256 \
+#     --param planner.horizon=20,40,60 \
+#     --param num_episodes=10
+
+name: gpu_mppi_pareto
+num_episodes: 10
+output: {dir: results/gpu_mppi_pareto}
+planner: {dt_plan: 0.05, goal_radius: 1.5, horizon: 60, inflate: 1, max_speed: 8.0,
+  n_samples: 128, replan_period: 0.3, resolution: 1.0, safety_margin: 0.5, temperature: 1.0,
+  type: gpu_mppi, use_prediction: true, w_goal: 1.0, w_obs: 100.0, w_smooth: 0.05}
+scenario:
+  goal: [45.0, 45.0]
+  obstacles: {count: 30, seed: 7, type: random}
+  resolution: 1.0
+  size: [50, 50]
+  start: [2.0, 2.0]
+  type: grid_world
+seed: 42
+sensor: {type: perfect}
+simulator: {drone_radius: 0.4, dt: 0.05, goal_radius: 1.5, max_accel: 80.0, max_steps: 1500,
+  type: dummy_2d}
