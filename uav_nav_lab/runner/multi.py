@@ -198,39 +198,91 @@ def run_episode_multi(
                     planner_dt_ms=planner_dt_ms,
                 )
 
-        # 2. step each drone's sim (only sim 0 advances the scenario clock)
+        # 2. step each drone's sim.
+        # When the sim backend supports two-phase stepping
+        # (step_command / step_readback), the runner issues commands in
+        # passive-first order (passive drones queue moveByVelocityAsync
+        # while the engine is paused, then the master unpauses, continues
+        # time, and re-pauses) and reads every bridge's state afterward —
+        # eliminating the 1-tick command lag that the original
+        # master-first loop carried.
+        _two_phase = all(hasattr(s, "step_command") and hasattr(s, "step_readback") for s in sims)
         new_states: list[Any] = list(states)
         infos = [None] * n
-        for i in range(n):
-            if finished[i]:
-                # frozen — no integration, peers see vel=0 via _peers_view
-                continue
-            cmd = _follow_plan(
-                plans[i], observations[i], planners[i].max_speed,
-                t_since_replan=float(t - last_replan_t[i]),
-            )
-            ns, info = sims[i].step(cmd)
-            new_states[i] = ns
-            infos[i] = info
-            recorders[i].log_step(
-                t=t,
-                true_pos=states[i].position,
-                true_vel=states[i].velocity,
-                observed_pos=observations[i],
-                cmd=cmd,
-                info={"collision": info.collision, "goal_reached": info.goal_reached},
-                sim_extra=dict(ns.extra) if ns.extra else None,
-            )
-            # Per-drone PNG capture, mirroring the single-drone runner.
-            # `frame_dirs[i]` is None for drones whose simulator doesn't
-            # surface camera_images this step.
-            if frame_dirs is not None and frame_dirs[i] is not None and ns.extra:
-                cam_imgs = ns.extra.get("camera_images") or {}
-                for cam_name, png_bytes in cam_imgs.items():
-                    if not png_bytes:
-                        continue
-                    fname = f"step_{step:04d}_{cam_name}.png"
-                    (frame_dirs[i] / fname).write_bytes(bytes(png_bytes))
+        if _two_phase:
+            # — phase 1: passive-first command dispatch —
+            # Passive bridges queue moveByVelocityAsync while the engine
+            # is still paused from the previous tick.
+            for i in range(n):
+                if i == 0 or finished[i]:
+                    continue
+                cmd = _follow_plan(
+                    plans[i], observations[i], planners[i].max_speed,
+                    t_since_replan=float(t - last_replan_t[i]),
+                )
+                sims[i].step_command(cmd)
+            # Master (i=0) handles unpause → continue → pause before
+            # queuing its own command, so every passive's queued velocity
+            # is processed in the same tick.
+            if not finished[0]:
+                cmd = _follow_plan(
+                    plans[0], observations[0], planners[0].max_speed,
+                    t_since_replan=float(t - last_replan_t[0]),
+                )
+                sims[0].step_command(cmd)
+            # — phase 2: readback (all bridges, after time advance) —
+            for i in range(n):
+                if finished[i]:
+                    continue
+                ns, info = sims[i].step_readback()
+                new_states[i] = ns
+                infos[i] = info
+                recorders[i].log_step(
+                    t=t,
+                    true_pos=states[i].position,
+                    true_vel=states[i].velocity,
+                    observed_pos=observations[i],
+                    cmd=_follow_plan(
+                        plans[i], observations[i], planners[i].max_speed,
+                        t_since_replan=float(t - last_replan_t[i]),
+                    ),
+                    info={"collision": info.collision, "goal_reached": info.goal_reached},
+                    sim_extra=dict(ns.extra) if ns.extra else None,
+                )
+                if frame_dirs is not None and frame_dirs[i] is not None and ns.extra:
+                    cam_imgs = ns.extra.get("camera_images") or {}
+                    for cam_name, png_bytes in cam_imgs.items():
+                        if not png_bytes:
+                            continue
+                        fname = f"step_{step:04d}_{cam_name}.png"
+                        (frame_dirs[i] / fname).write_bytes(bytes(png_bytes))
+        else:
+            for i in range(n):
+                if finished[i]:
+                    continue
+                cmd = _follow_plan(
+                    plans[i], observations[i], planners[i].max_speed,
+                    t_since_replan=float(t - last_replan_t[i]),
+                )
+                ns, info = sims[i].step(cmd)
+                new_states[i] = ns
+                infos[i] = info
+                recorders[i].log_step(
+                    t=t,
+                    true_pos=states[i].position,
+                    true_vel=states[i].velocity,
+                    observed_pos=observations[i],
+                    cmd=cmd,
+                    info={"collision": info.collision, "goal_reached": info.goal_reached},
+                    sim_extra=dict(ns.extra) if ns.extra else None,
+                )
+                if frame_dirs is not None and frame_dirs[i] is not None and ns.extra:
+                    cam_imgs = ns.extra.get("camera_images") or {}
+                    for cam_name, png_bytes in cam_imgs.items():
+                        if not png_bytes:
+                            continue
+                        fname = f"step_{step:04d}_{cam_name}.png"
+                        (frame_dirs[i] / fname).write_bytes(bytes(png_bytes))
 
         # 3. peer-vs-peer collision check on the freshly stepped positions
         peer_hit = _check_peer_collision(new_states, radii, drone_radius)

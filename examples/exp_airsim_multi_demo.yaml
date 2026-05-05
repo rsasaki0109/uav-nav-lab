@@ -24,6 +24,15 @@
 # At altitude 30 m the Blocks env's tallest cubes are well below, so
 # this isolates *coordination* from *avoidance* — pair with the
 # LiDAR demo (PR #45) for the perception story.
+#
+# Altitudes are staggered by ±2 m. The two-phase command dispatch in
+# runner/multi.py (passive-first ordering) eliminates the 1-tick
+# bridge lag, but a uniform-altitude 4-way centre crossing remains
+# fragile due to AirSim's physical mesh-to-mesh collisions between
+# drones — even perfect CV peer prediction cannot perfectly coordinate
+# 4 drones converging on (30,30,30) simultaneously. Staggering keeps
+# each corridor vertically separated while still showing all four
+# crossings on camera.
 
 name: airsim_multi_demo
 seed: 42
@@ -35,14 +44,11 @@ scenario:
   resolution: 1.0
   obstacles:
     type: none
-  # Crossing geometry but **staggered altitudes** so the four flight
-  # corridors don't intersect at one point. AirSim's physics + the
-  # bridge's 1-tick command lag for non-master sims (only sim 0
-  # advances simContinueForTime) make a single-altitude 4-way center
-  # crossing fragile — even with peer prediction the drones converge
-  # within the safety margin. Staggering by ±2 m of altitude keeps
-  # each corridor clear while still showing all four crossings on
-  # camera.
+  # Crossing geometry with staggered altitudes. The two-phase
+  # passive-first command dispatch in runner/multi.py removes the
+  # 1-tick bridge lag, but AirSim's physical mesh-to-mesh collisions
+  # between drones at the centre crossing make uniform altitude
+  # fragile regardless. Staggering by ±2 m keeps each corridor clear.
   drones:
     - {name: east,  start: [5.0,  30.0, 28.0], goal: [55.0, 30.0, 28.0], radius: 0.4}
     - {name: west,  start: [55.0, 30.0, 32.0], goal: [5.0,  30.0, 32.0], radius: 0.4}

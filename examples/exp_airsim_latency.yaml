@@ -1,0 +1,86 @@
+# AirSim sensor-latency cliff ablation — pillar obstacle configuration.
+# 60 pillars (dense 2D projection concentration: 60/3600 = 1.7 %) span
+# all 40 z-levels, ensuring that at any flight altitude the drone faces
+# the same 2D obstacle field.  Altitude 30 m keeps the drone above the
+# Blocks env's cube clusters.
+#
+# Sweep:
+#   uav-nav sweep examples/exp_airsim_latency.yaml #     --param sensor.delay=0.0,0.05,0.1,0.15,0.2,0.25,0.3 #     --param sensor.extrapolate=false,true #     --param num_episodes=10
+
+name: airsim_latency
+num_episodes: 10
+output: {dir: results/airsim_latency}
+planner: {dt_plan: 0.05, goal_radius: 1.5, horizon: 20, inflate: 1, max_speed: 5.0,
+  n_samples: 16, replan_period: 0.2, resolution: 1.0, safety_margin: 0.5, type: mpc,
+  use_prediction: false, w_goal: 1.0, w_obs: 100.0, w_smooth: 0.05}
+scenario:
+  goal: [55.0, 55.0, 30.0]
+  obstacles:
+    cells:
+    - [35, 33, 30]
+    - [22, 11, 30]
+    - [45, 13, 30]
+    - [33, 45, 30]
+    - [33, 39, 30]
+    - [54, 22, 30]
+    - [46, 51, 30]
+    - [28, 12, 30]
+    - [14, 25, 30]
+    - [51, 22, 30]
+    - [16, 4, 30]
+    - [41, 15, 30]
+    - [23, 46, 30]
+    - [39, 5, 30]
+    - [37, 54, 30]
+    - [27, 43, 30]
+    - [8, 39, 30]
+    - [6, 17, 30]
+    - [47, 6, 30]
+    - [29, 28, 30]
+    - [5, 6, 30]
+    - [36, 9, 30]
+    - [31, 25, 30]
+    - [34, 15, 30]
+    - [7, 37, 30]
+    - [28, 11, 30]
+    - [53, 31, 30]
+    - [54, 36, 30]
+    - [9, 16, 30]
+    - [50, 23, 30]
+    - [38, 52, 30]
+    - [30, 20, 30]
+    - [40, 6, 30]
+    - [23, 48, 30]
+    - [10, 20, 30]
+    - [9, 34, 30]
+    - [37, 56, 30]
+    - [38, 21, 30]
+    - [4, 7, 30]
+    - [21, 17, 30]
+    - [28, 4, 30]
+    - [24, 40, 30]
+    - [38, 42, 30]
+    - [27, 5, 30]
+    - [8, 37, 30]
+    - [38, 39, 30]
+    - [17, 7, 30]
+    - [31, 39, 30]
+    - [52, 13, 30]
+    - [44, 6, 30]
+    - [54, 38, 30]
+    - [36, 29, 30]
+    - [38, 5, 30]
+    - [50, 37, 30]
+    - [8, 25, 30]
+    - [29, 5, 30]
+    - [11, 33, 30]
+    - [42, 42, 30]
+  resolution: 1.0
+  size: [60, 60, 40]
+  start: [2.0, 2.0, 30.0]
+  type: voxel_world
+seed: 42
+sensor: {delay: 0.1, dt: 0.05, extrapolate: false, position_noise_std: 0.0, type: delayed,
+  velocity_window: 1}
+simulator: {dt: 0.05, goal_radius: 1.5, host: 127.0.0.1, max_steps: 1500, port: 41451,
+  settle_after_reset: 1.0, settle_after_teleport: 0.3, type: airsim, vehicle: Drone1}
