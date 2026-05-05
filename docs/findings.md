@@ -31,7 +31,7 @@ Wilson 95 % intervals on rates, mean ± 1.96·SEM on continuous metrics.
 <<<<<<< HEAD
 =======
 - [RL comparison baseline: gym.Env scaffold + initial training](#rl-comparison-baseline-gymenv-scaffold--initial-training)
->>>>>>> f09ffa8 (RL comparison baseline: gym.Env wrapper + SAC training scaffold)
+- [LSTM peer-motion predictor: scaffold + initial training](#lstm-peer-motion-predictor-scaffold--initial-training)
 ## MPC compute Pareto
 
 `examples/exp_predictive.yaml` — n_samples × horizon. The 6-panel
@@ -821,4 +821,53 @@ loop must drive the full sim/sensor/planner pipeline. The gym.Env
 wrapper simplifies this to just sim/sensor (no planner), but the
 training throughput bottleneck remains SB3's SAC implementation,
 not the framework.
->>>>>>> f09ffa8 (RL comparison baseline: gym.Env wrapper + SAC training scaffold)
+
+
+## LSTM peer-motion predictor: scaffold + initial training
+
+`uav_nav_lab/predictor/lstm.py` — `LSTMPredictor` registered as
+`"lstm"`. Maintains a sliding window of past positions per tracked
+obstacle (greedy NN association, same interface as
+`kalman_velocity`). An LSTM encoder maps the position history to
+future displacements at the requested `horizon_dts`. Falls back to
+finite-difference CV when no model is loaded.
+
+`scripts/train_lstm_predictor.py` trains a small LSTM (2-layer,
+hidden=32) on synthetic constant-velocity + noise trajectories.
+
+### Training results (synthetic data)
+
+| metric | value |
+|--------|-------|
+| dataset size | 12,000 (history → future) pairs |
+| train loss (epoch 0) | 52.99 |
+| train loss (epoch 30) | 52.70 |
+| per-step error | ~1.3 m (sqrt(53/30)) |
+| vs CV on clean data | CV is near-optimal (errors < 0.01 m) |
+
+The LSTM barely improves over 30 epochs on synthetic random-walk
+data — constant-velocity trajectories with small acceleration noise
+are trivially predictable by CV, and the LSTM cannot beat it without
+more complex training dynamics (e.g., multi-agent interaction data
+from the framework's multi-drone runs).
+
+### Comparison context
+
+For the multi-drone coordination study (PR #43) where CV peer
+prediction was shown to be the dominant axis:
+- CV predictor: 0 parameters, 0 training, O(1) prediction
+- LSTM predictor: ~5k parameters, needs dataset of actual
+  multi-drone interactions, training cost ~minutes-hours
+
+A learned predictor would need to be trained on the framework's
+own multi-drone trajectory data to capture the interaction patterns
+that CV misses. The scaffold is ready; the training data pipeline
+(extract peer trajectories from multi-drone episode logs) is the
+next step.
+
+### Note from plan.md
+
+The plan marks this as 長期 (4.2). The current scaffold demonstrates
+pluggability — any predictor can be swapped into the framework via
+`@PREDICTOR_REGISTRY.register` and `planner.predictor.type: lstm`.
+The training-data pipeline and full evaluation remain future work.
