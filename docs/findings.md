@@ -28,6 +28,10 @@ Wilson 95 % intervals on rates, mean ± 1.96·SEM on continuous metrics.
 
 - [GPU MPPI: flat plan-time scaling, right-shifted Pareto knee](#gpu-mppi-flat-plan-time-scaling-right-shifted-pareto-knee)
 - [ROS 2 bridge: spatial equivalence verified](#ros-2-bridge-spatial-equivalence-verified)
+<<<<<<< HEAD
+=======
+- [RL comparison baseline: gym.Env scaffold + initial training](#rl-comparison-baseline-gymenv-scaffold--initial-training)
+>>>>>>> f09ffa8 (RL comparison baseline: gym.Env wrapper + SAC training scaffold)
 ## MPC compute Pareto
 
 `examples/exp_predictive.yaml` — n_samples × horizon. The 6-panel
@@ -762,3 +766,59 @@ the full chain AirSim → ROS 2 → ros2_bridge should produce the
 same spatial behaviour as AirSim → airsim_bridge (direct), modulo
 the real-time clock constraint. The framework's planner/sensor/
 scenario boundary is proven invariant under the bridge hop.
+<<<<<<< HEAD
+=======
+
+
+## RL comparison baseline: gym.Env scaffold + initial training
+
+`uav_nav_lab/rl/env.py` — `GridNavEnv` / `VoxelNavEnv` gymnasium
+environments wrapping the framework's scenario + dummy sim stack.
+Observation: [ego_x, ego_y, goal_x, goal_y, 7×7 local occupancy].
+Action: continuous [vx, vy] bounded by max_speed. Reward: +10 goal,
+-10 collision, -0.01/step, +shaping.
+
+`scripts/train_rl_baseline.py` trains SAC (stable-baselines3 2.8)
+against grid_world 50×50 with 30 random obstacles (same config as
+the A\* baseline from `exp_basic.yaml`).
+
+### Training characteristics
+
+| metric | value |
+|--------|-------|
+| env step | 0.07 ms |
+| SB3 SAC fps (RTX 4070 Ti) | **36 steps/s** |
+| time for 100k timesteps | ~46 min |
+| success @ 10k timesteps | 0 % (20 episodes) |
+| success @ 5k timesteps | 0 % (10 episodes) |
+
+The environment step itself is fast (0.07 ms), but SB3's SAC training
+loop (rollout + replay buffer sampling + gradient updates on a 2-layer
+MLP) runs at 36 fps on GPU. SAC typically requires 100k–500k
+timesteps for simple grid navigation, translating to 1–4 hours of
+wall-clock training.
+
+### Comparison context
+
+For the same scenario (grid_world 50×50, 30 obstacles, max_speed=8):
+- **A\***: 95 % success, 5 ms plan_dt (from PR #11)
+- **MPC (n=16)**: 93 % success, 9 ms plan_dt
+- **SAC (10k steps)**: 0 % success, 46 min train time
+
+The RL baseline requires an order-of-magnitude more training than is
+practical in a single session. The scaffold (`rl/env.py` +
+`scripts/train_rl_baseline.py`) is functional and ready for
+overnight training; the comparison should be re-run at 500k+
+timesteps before any conclusions about plan-based vs learned
+navigation are drawn.
+
+### Note from plan.md
+
+The plan marks this as 優先度低 and suggests a separate repo or
+submodule — the framework's design as a "planner comparison tool"
+makes RL integration inherently heavyweight because the training
+loop must drive the full sim/sensor/planner pipeline. The gym.Env
+wrapper simplifies this to just sim/sensor (no planner), but the
+training throughput bottleneck remains SB3's SAC implementation,
+not the framework.
+>>>>>>> f09ffa8 (RL comparison baseline: gym.Env wrapper + SAC training scaffold)
